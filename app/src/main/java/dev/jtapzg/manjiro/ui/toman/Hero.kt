@@ -172,7 +172,8 @@ fun Hero(
                 }
             }
 
-            // Linha 2: stats (temps + bateria + disciplina)
+            // Linha 2: stats (temps + bateria + disciplina) — escondido quando UNKNOWN
+            val isUnknown = mode == FsmMode.UNKNOWN
             Column {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -180,24 +181,29 @@ fun Hero(
                 ) {
                     Stat(
                         label = "Toman",
-                        value = TimeFormat.tempC10(state.socTempC10) + "°",
-                        valueColor = tempColor(state.socTempC10),
+                        value = if (isUnknown || state.socTempC10 <= 0) "—"
+                            else TimeFormat.tempC10(state.socTempC10) + "°",
+                        valueColor = if (isUnknown) TextSecondary else tempColor(state.socTempC10),
                     )
                     Stat(
                         label = "Hinata",
-                        value = TimeFormat.tempC10(state.batteryTempC10) + "°",
-                        valueColor = tempColor(state.batteryTempC10),
+                        value = if (isUnknown || state.batteryTempC10 <= 0) "—"
+                            else TimeFormat.tempC10(state.batteryTempC10) + "°",
+                        valueColor = if (isUnknown) TextSecondary else tempColor(state.batteryTempC10),
                     )
                     Stat(
                         label = "Bateria",
                         value = if (state.batteryPct in 0..100) "${state.batteryPct}%" else "—",
                         valueColor = if (state.batteryPct in 0..15) StateHot
                             else if (state.batteryPct in 16..30) MikeyGold
+                            else if (isUnknown) TextSecondary
                             else TextPrimary,
                     )
                 }
-                Spacer(Modifier.height(14.dp))
-                DisciplineBar(state.lyapunovV)
+                if (!isUnknown) {
+                    Spacer(Modifier.height(14.dp))
+                    DisciplineBar(state.lyapunovV)
+                }
             }
         }
     }

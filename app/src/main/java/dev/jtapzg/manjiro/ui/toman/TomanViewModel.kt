@@ -13,8 +13,18 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** Resumo do diagnóstico do daemon. */
+enum class DaemonStatus {
+    UNKNOWN,        // ainda checando
+    NO_ROOT,        // libsu não conseguiu shell root
+    NO_MODULE,      // /data/adb/manjiro_dinamic não existe
+    DORMANT,        // módulo presente mas daemon não publicou status ainda
+    ALIVE,          // tudo certo, status.json sendo lido
+}
 
 class TomanViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -24,6 +34,28 @@ class TomanViewModel(app: Application) : AndroidViewModel(app) {
     val games: StateFlow<List<GameUi>> = repo.games
     val rootGranted: StateFlow<Boolean?> = repo.rootGranted
     val moduleInstalled: StateFlow<Boolean?> = repo.moduleInstalled
+
+    /**
+     * Jogos visíveis no grid principal: apenas os que estão **instalados**
+     * no celular. O banco do módulo lista ~1700 candidatos pré-cadastrados;
+     * isso ficaria poluído demais.
+     */
+    val installedGames: StateFlow<List<GameUi>> = repo.games
+        .map { list -> list.filter { it.installed } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Diagnóstico combinado (root + módulo + estado). */
+    val daemonStatus: StateFlow<DaemonStatus> = combine(
+        repo.rootGranted, repo.moduleInstalled, repo.state
+    ) { root, mod, st ->
+        when {
+            root == null || mod == null -> DaemonStatus.UNKNOWN
+            root == false -> DaemonStatus.NO_ROOT
+            mod == false -> DaemonStatus.NO_MODULE
+            st.mode.equals("unknown", true) -> DaemonStatus.DORMANT
+            else -> DaemonStatus.ALIVE
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, DaemonStatus.UNKNOWN)
 
     private val _selectedGame = MutableStateFlow<GameUi?>(null)
     val selectedGame: StateFlow<GameUi?> = _selectedGame.asStateFlow()
