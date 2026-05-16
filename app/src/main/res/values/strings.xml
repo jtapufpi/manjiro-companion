@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Manjiro</string>
+    <string name="app_subtitle">Toman Companion</string>
+
+    <!-- FSM states (Tokyo Revengers vocab) -->
+    <string name="state_bootstrap">Reunindo o Toman</string>
+    <string name="state_idle">Toman em casa</string>
+    <string name="state_active">Patrulha do bairro</string>
+    <string name="state_engaged">Modo Mikey</string>
+    <string name="state_cooldown">Recuo estratégico</string>
+    <string name="state_safe">Refúgio do Toman</string>
+    <string name="state_unknown">Aguardando o Toman…</string>
+
+    <!-- Hero card -->
+    <string name="hero_session_format">%1$s · %2$s</string>
+    <string name="hero_no_game">nenhum jogo em foco</string>
+    <string name="hero_temp_format">%1$s°</string>
+    <string name="hero_bat_temp">🔋 %1$s°</string>
+    <string name="hero_bat_pct">⚡ %1$d%%</string>
+    <string name="hero_discipline">Disciplina</string>
+    <string name="hero_discipline_great">ótima</string>
+    <string name="hero_discipline_ok">normal</string>
+    <string name="hero_discipline_low">limitada</string>
+    <string name="hero_discipline_bad">instável</string>
+    <string name="hero_no_data">esperando dados do motor…</string>
+
+    <!-- Launcher grid -->
+    <string name="grid_title">Meus jogos</string>
+    <string name="grid_empty_title">Nenhum capitão recrutado</string>
+    <string name="grid_empty_body">Quando você abre um jogo, o Manjiro identifica e ativa o Modo Mikey. Aperte abaixo pra escolher os capitães manualmente.</string>
+    <string name="grid_recruit">Recrutar capitães</string>
+    <string name="grid_search_hint">Buscar capitão…</string>
+
+    <!-- FAB -->
+    <string name="fab_roncar">Tocar a roncar</string>
+    <string name="fab_recuar">Recuar</string>
+    <string name="fab_refugio">Sair do refúgio</string>
+
+    <!-- Ficha do membro -->
+    <string name="ficha_title">Ficha do membro</string>
+    <string name="ficha_class_label">Patente</string>
+    <string name="ficha_enabled">Ativo no Toman</string>
+    <string name="ficha_combat">Forma de combate</string>
+    <string name="ficha_red_line">Linha vermelha</string>
+    <string name="ficha_hud">Visão do líder (overlay)</string>
+    <string name="ficha_dnd">Silêncio em batalha</string>
+    <string name="ficha_save">Salvar</string>
+    <string name="ficha_remove">Tirar do Toman</string>
+    <string name="ficha_launch">Tocar a roncar</string>
+    <string name="ficha_total_time">%1$s totais · %2$d batalhas</string>
+    <string name="ficha_last_session">Última batalha: %1$s</string>
+    <string name="ficha_never_played">Sem batalhas ainda</string>
+
+    <!-- Combat forms (profile presets) -->
+    <string name="form_mikey">🐉 Modo Mikey</string>
+    <string name="form_mikey_desc">Entrega tudo. Performance máxima.</string>
+    <string name="form_hina">🌸 Modo Hina</string>
+    <string name="form_hina_desc">Calmo e econômico. Preserva a Hinata.</string>
+    <string name="form_draken">⚙ Modo Draken</string>
+    <string name="form_draken_desc">Firme e duradouro. Para maratonas.</string>
+
+    <!-- Game classes -->
+    <string name="class_heavy_3d">Capitão 3D</string>
+    <string name="class_open_world">Líder de mundo aberto</string>
+    <string name="class_competitive">Competitivo</string>
+    <string name="class_casual">Casual</string>
+    <string name="class_benchmark">Benchmark</string>
+    <string name="class_imported">Importado</string>
+    <string name="class_user_added">Recrutado por você</string>
+
+    <!-- Adjustes / settings -->
+    <string name="ajustes_title">Ajustes do Toman</string>
+    <string name="ajustes_hud_global">Visão do líder global (overlay)</string>
+    <string name="ajustes_default_form">Forma de combate padrão</string>
+    <string name="ajustes_open_webui">Abrir painel avançado</string>
+    <string name="ajustes_exit_safe">Sair do refúgio</string>
+    <string name="ajustes_dump">Gerar crônica de diagnóstico</string>
+    <string name="ajustes_version">Versão</string>
+    <string name="ajustes_module_version">Módulo Manjiro Dinamic</string>
+    <string name="ajustes_devmode_enabled">Modo desenvolvedor ativado</string>
+
+    <!-- Notification channels -->
+    <string name="channel_estado">Estado do Toman</string>
+    <string name="channel_estado_desc">Mostra o modo atual, temperatura e jogo em foco.</string>
+    <string name="channel_cronica">Crônica de batalha</string>
+    <string name="channel_cronica_desc">Resumo ao final de cada sessão de jogo.</string>
+
+    <!-- Notification actions -->
+    <string name="notif_roncar">Tocar a roncar</string>
+    <string name="notif_recuar">Recuar</string>
+    <string name="notif_refugio">Sair do refúgio</string>
+    <string name="notif_cronica">Crônica</string>
+    <string name="notif_abrir">Abrir</string>
+    <string name="notif_safe_reason">Motivo: %1$s</string>
+
+    <!-- Safe reasons -->
+    <string name="safe_reason_battery_emergency">Hinata muito quente</string>
+    <string name="safe_reason_soc_critical">Toman exausto</string>
+    <string name="safe_reason_fail_limit_exceeded">Falha repetida nos comandos</string>
+    <string name="safe_reason_shutdown">Toman recolhendo</string>
+    <string name="safe_reason_unknown">Motivo desconhecido</string>
+
+    <!-- Errors / connection -->
+    <string name="error_no_root">Mikey precisa do acesso de líder (root) pra controlar o Toman. Concede acesso no seu gerenciador (Magisk / KernelSU / APatch).</string>
+    <string name="error_no_module">Módulo Manjiro Dinamic não detectado. Instala o módulo primeiro.</string>
+    <string name="error_no_data">Esperando o primeiro relatório do motor…</string>
+    <string name="connecting">Conectando ao Toman…</string>
+
+    <!-- Misc -->
+    <string name="seconds_ago">há %1$ds</string>
+    <string name="minutes_ago">há %1$dmin</string>
+    <string name="hours_ago">há %1$dh</string>
+    <string name="days_ago">há %1$d dias</string>
+    <string name="time_h_m">%1$dh %2$02dm</string>
+    <string name="time_m_s">%1$d:%2$02d</string>
+    <string name="time_h_m_s">%1$d:%2$02d:%3$02d</string>
+
+    <!-- Cronica list -->
+    <string name="cronica_title">Crônica</string>
+    <string name="cronica_today">Hoje</string>
+    <string name="cronica_session_now">agora</string>
+    <string name="cronica_pico">pico %1$s°</string>
+    <string name="cronica_media">média %1$s°</string>
+    <string name="cronica_fps">FPS %1$d</string>
+    <string name="cronica_drain">−%1$d%%</string>
+    <string name="cronica_history">Histórico</string>
+    <string name="cronica_empty">Nenhuma batalha registrada ainda</string>
+
+    <!-- Onboarding -->
+    <string name="onboard_welcome_title">Bem-vindo ao Toman</string>
+    <string name="onboard_welcome_body">Eu sou o Manjiro. Controlo o teu celular como o Mikey controla o Toman: protejo o frio, libero o calor quando precisa, e seguro o Black Dragon longe da bateria.</string>
+    <string name="onboard_root_title">Mikey precisa do acesso de líder</string>
+    <string name="onboard_root_body">Pra falar com o motor Manjiro Dinamic, eu preciso de acesso root. Abre teu Magisk/KernelSU/APatch e concede a permissão.</string>
+    <string name="onboard_games_title">Quem são os capitães?</string>
+    <string name="onboard_games_body">Estes jogos serão postos sob o Modo Mikey. Tire o que não for jogo.</string>
+    <string name="onboard_hud_title">Aceita a Visão do Líder?</string>
+    <string name="onboard_hud_body">Um chip flutuante mostrando FPS, temperatura e bateria durante o jogo. Você pode desligar a qualquer momento.</string>
+    <string name="onboard_done_title">Toman pronto pra rua</string>
+    <string name="onboard_done_body">Tocar a roncar.</string>
+    <string name="onboard_next">Próximo</string>
+    <string name="onboard_grant">Conceder acesso</string>
+    <string name="onboard_finish">Tocar a roncar</string>
+    <string name="onboard_skip">Pular</string>
+</resources>

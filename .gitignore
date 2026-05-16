@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+.kotlin/
+
+# Android
+local.properties
+*.apk
+*.aab
+*.aar
+*.dex
+captures/
+.cxx/
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+out/
+.DS_Store
+
+# Generated
+generated/
+**/build/
+
+# Keystore
+*.jks
+*.keystore
+signing.properties
+
+# Working
+assets-source/
