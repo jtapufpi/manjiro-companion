@@ -1,0 +1,9 @@
+{
+  "title": "Manjiro Dinamic",
+  "icon": "icon.webp",
+  "windowResize": true,
+  "backHandler": true,
+  "exitConfirm": false,
+  "pullToRefresh": false,
+  "autoStatusBarsStyle": true
+}

@@ -1,0 +1,174 @@
+#!/system/bin/sh
+# MANJIRO DINAMIC — manjiro_bridge
+#
+# Purpose
+# -------
+# The Encore-derived system_monitor.apk emits a plain-text status file
+# (Encore-style: one "<key> <value> [extra]" per line, no JSON). The Manjiro
+# daemon (manjirod) instead expects:
+#   1. A heartbeat file at $STATEDIR/heartbeat containing a single line
+#      "timestamp_ms=<ms-since-epoch>". Without it,
+#      `helper_alive` stays false and the JSON is never even consulted.
+#   2. A JSON status file at $STATEDIR/android_status.json with the keys
+#      that manjirod greps for (screen_on, foreground_package,
+#      battery_temp_c10, max_thermal_c10, current_ma, gpu_busy_pct,
+#      cpu_psi_cpct, mem_psi_cpct, io_psi_cpct).
+#
+# This bridge runs as a tiny shell daemon. Every BRIDGE_INTERVAL seconds it:
+#   * Checks the mtime of the APK's output file ($STATEDIR/apk_status).
+#     If it was updated within HELPER_TIMEOUT_SEC, the APK is considered
+#     alive and a fresh heartbeat is written.
+#   * Parses the APK output (focused_app / screen_awake / battery_saver /
+#     zen_mode) and merges it with sysfs sensor reads (temps, current,
+#     gpu busy, PSI) into the JSON shape manjirod expects.
+#
+# This is intentionally pure POSIX shell so it runs in Magisk's busybox
+# without ART overhead.
+
+MODDIR="/data/adb/modules/manjiro_dinamic"
+DATA="/data/adb/manjiro_dinamic"
+_prev=""
+for _arg in "$@"; do
+  case "$_prev" in
+    --moddir) MODDIR="$_arg" ;;
+    --data)   DATA="$_arg"   ;;
+  esac
+  _prev="$_arg"
+done
+
+STATEDIR="$DATA/state"
+LOGDIR="$DATA/logs"
+CONFDIR="$DATA/config"
+
+mkdir -p "$STATEDIR" "$LOGDIR" 2>/dev/null
+
+# Shared helpers (now_ms, atomic_write, sensor readers, find_fg_app, …)
+if [ -r "$MODDIR/scripts/common.sh" ]; then
+  . "$MODDIR/scripts/common.sh"
+fi
+[ -r "$CONFDIR/runtime.conf" ] && . "$CONFDIR/runtime.conf"
+
+# Tunables — overridable from runtime.conf.
+BRIDGE_INTERVAL="${BRIDGE_INTERVAL:-5}"     # seconds between iterations
+HELPER_TIMEOUT_SEC="${HELPER_TIMEOUT_SEC:-30}"  # max APK-output age to count as alive
+
+APK_FILE="$STATEDIR/apk_status"          # raw Encore-format text
+JSON_FILE="$STATEDIR/android_status.json"
+HB_FILE="$STATEDIR/heartbeat"
+
+# Fallbacks if common.sh wasn't loaded (so the bridge is self-contained).
+type now_ms >/dev/null 2>&1 || now_ms() {
+  date +%s%3N 2>/dev/null || echo $(( $(date +%s) * 1000 ))
+}
+type atomic_write >/dev/null 2>&1 || atomic_write() {
+  printf '%s' "$2" > "$1.tmp" 2>/dev/null
+  mv "$1.tmp" "$1" 2>/dev/null
+}
+type is_num >/dev/null 2>&1 || is_num() {
+  case "$1" in ''|*[!0-9-]*) return 1;; *) return 0;; esac
+}
+
+# Single-instance lock so two bridges don't fight over the heartbeat.
+LOCKDIR="$STATEDIR/bridge.lock"
+if mkdir "$LOCKDIR" 2>/dev/null; then
+  echo $$ > "$LOCKDIR/pid"
+else
+  old="$(cat "$LOCKDIR/pid" 2>/dev/null)"
+  if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+    exit 0
+  fi
+  rm -rf "$LOCKDIR"; mkdir "$LOCKDIR" 2>/dev/null; echo $$ > "$LOCKDIR/pid"
+fi
+trap 'rm -rf "$LOCKDIR" 2>/dev/null; exit 0' TERM INT HUP
+
+log() {
+  [ "${BRIDGE_LOG:-1}" = "1" ] || return 0
+  echo "$(date '+%H:%M:%S') $*" >> "$LOGDIR/bridge.log" 2>/dev/null
+}
+log "bridge:start interval=${BRIDGE_INTERVAL}s timeout=${HELPER_TIMEOUT_SEC}s"
+
+# Parse one field out of the Encore-format file: "<key> <value> [extras]".
+apk_field() {
+  awk -v k="$1" '$1==k {print $2; exit}' "$APK_FILE" 2>/dev/null
+}
+
+while :; do
+  ts_ms="$(now_ms)"
+
+  # ── Determine if the helper APK is alive ─────────────────────────────
+  apk_alive=0
+  if [ -f "$APK_FILE" ]; then
+    mt="$(stat -c %Y "$APK_FILE" 2>/dev/null)"
+    if is_num "$mt"; then
+      age=$(( $(date +%s) - mt ))
+      [ "$age" -ge 0 ] && [ "$age" -le "$HELPER_TIMEOUT_SEC" ] && apk_alive=1
+    fi
+  fi
+
+  # ── Read APK-provided facts (Encore plain-text → variables) ──────────
+  fg_pkg=""
+  screen_on="false"
+  bat_saver=0
+  zen_mode=0
+  if [ "$apk_alive" = "1" ]; then
+    fg_pkg="$(apk_field focused_app)"
+    case "$fg_pkg" in none|unknown|"") fg_pkg="" ;; esac
+    sa="$(apk_field screen_awake)"
+    [ "$sa" = "1" ] && screen_on="true"
+    bs="$(apk_field battery_saver)"; is_num "$bs" && bat_saver="$bs"
+    zm="$(apk_field zen_mode)";      is_num "$zm" && zen_mode="$zm"
+  fi
+
+  # Fallback to the daemon's own shell helper for foreground app — this
+  # is critical when the APK hasn't yet resolved a focus or the user is
+  # on the launcher.
+  if [ -z "$fg_pkg" ] && type find_fg_app >/dev/null 2>&1; then
+    fg_pkg="$(find_fg_app 2>/dev/null)"
+  fi
+
+  # ── Sensor reads from sysfs (Manjiro's authoritative source) ─────────
+  # v1.6: battery and SoC die-temp are read INDEPENDENTLY. Battery temp is
+  # NEVER used as a stand-in for SoC max_thermal — the daemon needs them
+  # separate so tactical decisions are SoC-driven while battery is emergency.
+  if type battery_temp_c10 >/dev/null 2>&1; then
+    bat_c10="$(battery_temp_c10)"
+    if type soc_thermal_c10 >/dev/null 2>&1; then
+      max_c10="$(soc_thermal_c10)"
+    elif type max_thermal_c10 >/dev/null 2>&1; then
+      max_c10="$(max_thermal_c10)"
+    else
+      max_c10=0
+    fi
+    cur_ma="$(battery_ma)"
+    gpu_pct="$(gpu_busy)"
+    cpu_psi="$(psi_some_c100 /proc/pressure/cpu)"
+    mem_psi="$(psi_some_c100 /proc/pressure/memory)"
+    io_psi="$(psi_some_c100 /proc/pressure/io)"
+  else
+    bat_c10=0; max_c10=0; cur_ma=0; gpu_pct=0
+    cpu_psi=0; mem_psi=0; io_psi=0
+  fi
+
+  # ── Emit the JSON manjirod expects ───────────────────────────────────
+  atomic_write "$JSON_FILE" \
+"{\"version\":\"bridge-1.0\",\"timestamp_ms\":${ts_ms},\
+\"helper\":\"encore_system_monitor\",\"helper_alive\":$( [ "$apk_alive" = "1" ] && echo true || echo false ),\
+\"foreground_package\":\"${fg_pkg:-}\",\
+\"screen_on\":${screen_on},\
+\"battery_saver\":${bat_saver},\"zen_mode\":${zen_mode},\
+\"battery_temp_c10\":${bat_c10:-0},\"max_thermal_c10\":${max_c10:-0},\
+\"current_ma\":${cur_ma:-0},\"gpu_busy_pct\":${gpu_pct:-0},\
+\"cpu_psi_cpct\":${cpu_psi:-0},\"mem_psi_cpct\":${mem_psi:-0},\"io_psi_cpct\":${io_psi:-0}}"
+
+  # ── Heartbeat: only refresh while the APK is actually alive ──────────
+  if [ "$apk_alive" = "1" ]; then
+    helper_pid="$(cat "$STATEDIR/helper.pid" 2>/dev/null)"
+    atomic_write "$HB_FILE" "timestamp_ms=${ts_ms}
+helper=encore_system_monitor
+pid=${helper_pid:-0}"
+  else
+    log "bridge:apk_stale age>${HELPER_TIMEOUT_SEC}s — heartbeat suppressed"
+  fi
+
+  sleep "$BRIDGE_INTERVAL"
+done

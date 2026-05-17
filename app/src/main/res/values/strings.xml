@@ -1,145 +1,157 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Manjiro</string>
-    <string name="app_subtitle">Toman Companion</string>
+    <string name="app_name">Manjiro Gaming</string>
+    <string name="app_tagline">Modo Game · Manjiro Dinamic</string>
 
-    <!-- FSM states (Tokyo Revengers vocab) -->
-    <string name="state_bootstrap">Reunindo o Toman</string>
-    <string name="state_idle">Toman em casa</string>
-    <string name="state_active">Patrulha do bairro</string>
-    <string name="state_engaged">Modo Mikey</string>
-    <string name="state_cooldown">Recuo estratégico</string>
-    <string name="state_safe">Refúgio do Toman</string>
-    <string name="state_unknown">Aguardando o Toman…</string>
+    <!-- Saudação dinâmica -->
+    <string name="greet_default">Pronto para jogar?</string>
+    <string name="greet_named">Pronto para jogar, %1$s?</string>
 
-    <!-- Hero card -->
-    <string name="hero_session_format">%1$s · %2$s</string>
-    <string name="hero_no_game">nenhum jogo em foco</string>
-    <string name="hero_temp_format">%1$s°</string>
-    <string name="hero_bat_temp">🔋 %1$s°</string>
-    <string name="hero_bat_pct">⚡ %1$d%%</string>
-    <string name="hero_discipline">Disciplina</string>
-    <string name="hero_discipline_great">ótima</string>
-    <string name="hero_discipline_ok">normal</string>
-    <string name="hero_discipline_low">limitada</string>
-    <string name="hero_discipline_bad">instável</string>
-    <string name="hero_no_data">esperando dados do motor…</string>
+    <!-- Abas -->
+    <string name="tab_dashboard">Início</string>
+    <string name="tab_modes">Modos</string>
+    <string name="tab_games">Jogos</string>
+    <string name="tab_stats">Estatísticas</string>
+    <string name="tab_settings">Ajustes</string>
 
-    <!-- Launcher grid -->
-    <string name="grid_title">Meus jogos</string>
-    <string name="grid_empty_title">Nenhum capitão recrutado</string>
-    <string name="grid_empty_body">Quando você abre um jogo, o Manjiro identifica e ativa o Modo Mikey. Aperte abaixo pra escolher os capitães manualmente.</string>
-    <string name="grid_recruit">Recrutar capitães</string>
-    <string name="grid_search_hint">Buscar capitão…</string>
+    <!-- Modos -->
+    <string name="mode_lite">Lite</string>
+    <string name="mode_balanced">Balanced</string>
+    <string name="mode_performance">Performance</string>
+    <string name="mode_auto">Automático</string>
+    <string name="mode_lite_desc">Economiza bateria. Perfeito pra jogar sem carregar.</string>
+    <string name="mode_balanced_desc">Equilíbrio entre fluidez e bateria.</string>
+    <string name="mode_performance_desc">Tudo no limite. Sem travas, sem quedas de FPS.</string>
+    <string name="mode_auto_desc">Muda sozinho conforme sua bateria e temperatura.</string>
+    <string name="mode_active_badge">ATIVO</string>
 
-    <!-- FAB -->
-    <string name="fab_roncar">Tocar a roncar</string>
-    <string name="fab_recuar">Recuar</string>
-    <string name="fab_refugio">Sair do refúgio</string>
+    <!-- Dashboard -->
+    <string name="dash_current_mode">Modo atual</string>
+    <string name="dash_change_mode">Trocar modo</string>
+    <string name="dash_metrics_title">Tudo ao vivo</string>
+    <string name="dash_metric_cpu">Desempenho do celular</string>
+    <string name="dash_metric_ram">Memória livre</string>
+    <string name="dash_metric_gpu">Motor gráfico</string>
+    <string name="dash_my_games">Seus jogos</string>
+    <string name="dash_no_games">Você ainda não adicionou jogos. Toque em +</string>
+    <string name="dash_add_game">Adicionar jogo</string>
+    <string name="dash_session_short">jogou há %1$s</string>
+    <string name="dash_session_never">nunca jogou ainda</string>
 
-    <!-- Ficha do membro -->
-    <string name="ficha_title">Ficha do membro</string>
-    <string name="ficha_class_label">Patente</string>
-    <string name="ficha_enabled">Ativo no Toman</string>
-    <string name="ficha_combat">Forma de combate</string>
-    <string name="ficha_red_line">Linha vermelha</string>
-    <string name="ficha_hud">Visão do líder (overlay)</string>
-    <string name="ficha_dnd">Silêncio em batalha</string>
-    <string name="ficha_save">Salvar</string>
-    <string name="ficha_remove">Tirar do Toman</string>
-    <string name="ficha_launch">Tocar a roncar</string>
-    <string name="ficha_total_time">%1$s totais · %2$d batalhas</string>
-    <string name="ficha_last_session">Última batalha: %1$s</string>
-    <string name="ficha_never_played">Sem batalhas ainda</string>
+    <!-- Jogos -->
+    <string name="games_title">Seus jogos</string>
+    <string name="games_add">Adicionar</string>
+    <string name="games_empty">Nenhum jogo adicionado ainda. Toque em \"Adicionar\" no topo.</string>
+    <string name="games_mode_label">Modo desse jogo</string>
+    <string name="games_quality_label">Nitidez da tela</string>
+    <string name="games_quality_native">Nativo</string>
+    <string name="games_quality_high">Alta qualidade</string>
+    <string name="games_quality_good">Boa fluidez</string>
+    <string name="games_quality_low">⚠ Imagem bem reduzida</string>
+    <string name="games_quality_value_pct">%1$d%% · %2$d × %3$d</string>
+    <string name="games_clean_memory_label">Limpar memória ao abrir</string>
+    <string name="games_clean_memory_sub">Libera RAM antes do jogo iniciar.</string>
+    <string name="games_notif_label">Notificação dessa sessão</string>
+    <string name="games_notif_sub">Mostra modo, tempo e métricas enquanto joga.</string>
+    <string name="games_launch">Jogar agora</string>
+    <string name="games_remove">Tirar dos meus jogos</string>
+    <string name="games_picker_title">Adicionar jogo</string>
+    <string name="games_picker_hint">Buscar app instalado…</string>
+    <string name="games_picker_empty">Nenhum app encontrado.</string>
+    <string name="games_picker_cancel">Cancelar</string>
 
-    <!-- Combat forms (profile presets) -->
-    <string name="form_mikey">🐉 Modo Mikey</string>
-    <string name="form_mikey_desc">Entrega tudo. Performance máxima.</string>
-    <string name="form_hina">🌸 Modo Hina</string>
-    <string name="form_hina_desc">Calmo e econômico. Preserva a Hinata.</string>
-    <string name="form_draken">⚙ Modo Draken</string>
-    <string name="form_draken_desc">Firme e duradouro. Para maratonas.</string>
+    <!-- Estatísticas -->
+    <string name="stats_title">Estatísticas</string>
+    <string name="stats_empty">Jogue um pouco e a gente te mostra teu histórico aqui.</string>
+    <string name="stats_session_current">Sessão atual</string>
+    <string name="stats_last_5">Últimas 5 sessões</string>
+    <string name="stats_total_time">Tempo total</string>
+    <string name="stats_total_sessions">Sessões</string>
+    <string name="stats_max_temp">Maior temperatura</string>
+    <string name="stats_chart_title">Desempenho × Memória</string>
+    <string name="stats_chart_perf">Desempenho</string>
+    <string name="stats_chart_mem">Memória</string>
 
-    <!-- Game classes -->
-    <string name="class_heavy_3d">Capitão 3D</string>
-    <string name="class_open_world">Líder de mundo aberto</string>
-    <string name="class_competitive">Competitivo</string>
-    <string name="class_casual">Casual</string>
-    <string name="class_benchmark">Benchmark</string>
-    <string name="class_imported">Importado</string>
-    <string name="class_user_added">Recrutado por você</string>
+    <!-- Ajustes -->
+    <string name="settings_title">Ajustes</string>
+    <string name="settings_section_account">Você</string>
+    <string name="settings_name_label">Seu nome (pra saudação)</string>
+    <string name="settings_name_hint">Como deseja ser chamado</string>
+    <string name="settings_section_app">Aplicativo</string>
+    <string name="settings_start_on_boot">Iniciar com o sistema</string>
+    <string name="settings_start_on_boot_sub">O modo escolhido volta a ser aplicado após o boot.</string>
+    <string name="settings_notif_master">Notificações</string>
+    <string name="settings_notif_master_sub">Mostra a notificação persistente durante o jogo.</string>
+    <string name="settings_section_advanced">Avançado</string>
+    <string name="settings_open_webui">Abrir painel avançado (Manjiro Dinamic)</string>
+    <string name="settings_open_webui_sub">Métricas técnicas, atuadores, logs.</string>
+    <string name="settings_reset">Redefinir todos os dados</string>
+    <string name="settings_reset_sub">Apaga jogos cadastrados, estatísticas e ajustes.</string>
+    <string name="settings_reset_confirm_title">Tem certeza?</string>
+    <string name="settings_reset_confirm_body">Isso apaga teus jogos cadastrados, estatísticas e ajustes. Não dá pra desfazer.</string>
+    <string name="settings_reset_confirm_yes">Apagar tudo</string>
+    <string name="settings_reset_confirm_no">Voltar</string>
+    <string name="settings_section_about">Sobre</string>
+    <string name="settings_version">Versão %1$s</string>
+    <string name="settings_dev_by">Desenvolvido por jtapzg</string>
+    <string name="settings_dev_link">github.com/jtapzg</string>
 
-    <!-- Adjustes / settings -->
-    <string name="ajustes_title">Ajustes do Toman</string>
-    <string name="ajustes_hud_global">Visão do líder global (overlay)</string>
-    <string name="ajustes_default_form">Forma de combate padrão</string>
-    <string name="ajustes_open_webui">Abrir painel avançado</string>
-    <string name="ajustes_exit_safe">Sair do refúgio</string>
-    <string name="ajustes_dump">Gerar crônica de diagnóstico</string>
-    <string name="ajustes_version">Versão</string>
-    <string name="ajustes_module_version">Módulo Manjiro Dinamic</string>
-    <string name="ajustes_devmode_enabled">Modo desenvolvedor ativado</string>
+    <!-- Notificação -->
+    <string name="channel_game">Sessão de jogo</string>
+    <string name="channel_game_desc">Modo, métricas e tempo da sessão de jogo em andamento.</string>
+    <string name="channel_event">Eventos</string>
+    <string name="channel_event_desc">Avisos rápidos: modo aplicado, memória liberada, modo automático.</string>
+    <string name="notif_idle_title">Manjiro Gaming pronto</string>
+    <string name="notif_idle_text">Modo %1$s · toque pra trocar</string>
+    <string name="notif_game_title">🎮 Modo Game Ativo — %1$s</string>
+    <string name="notif_game_text">▸ Modo %1$s · %2$s</string>
+    <string name="notif_safe_title">⚠ Celular esquentando</string>
+    <string name="notif_safe_text">Modo econômico ativado automaticamente.</string>
+    <string name="notif_low_bat_title">🔋 Bateria baixa</string>
+    <string name="notif_low_bat_text">Modo Lite ativado automaticamente.</string>
+    <string name="notif_action_open">Abrir</string>
+    <string name="notif_action_recoil">Sair do jogo</string>
 
-    <!-- Notification channels -->
-    <string name="channel_estado">Estado do Toman</string>
-    <string name="channel_estado_desc">Mostra o modo atual, temperatura e jogo em foco.</string>
-    <string name="channel_cronica">Crônica de batalha</string>
-    <string name="channel_cronica_desc">Resumo ao final de cada sessão de jogo.</string>
+    <!-- Mensagens curtas de feedback (toasts / snackbars) -->
+    <string name="fb_mode_applied">Tudo certo! Modo %1$s ativado.</string>
+    <string name="fb_mode_applied_root_fail">Modo %1$s salvo, mas faltou root pra aplicar no motor.</string>
+    <string name="fb_quality_applied">Nitidez de %1$s ajustada para %2$d%%.</string>
+    <string name="fb_game_added">%1$s adicionado aos seus jogos.</string>
+    <string name="fb_game_removed">%1$s removido.</string>
+    <string name="fb_game_launching">Aplicando modo %1$s e abrindo %2$s…</string>
+    <string name="fb_memory_freed">✓ Memória liberada · Modo %1$s ativado</string>
+    <string name="fb_name_saved">Beleza, %1$s. Saudação atualizada.</string>
+    <string name="fb_name_cleared">Saudação resetada.</string>
+    <string name="fb_setting_saved">Pronto, ajuste salvo.</string>
+    <string name="fb_data_reset">Tudo limpo. Começando do zero.</string>
+    <string name="fb_notif_on">Notificação ligada.</string>
+    <string name="fb_notif_off">Notificação desligada.</string>
+    <string name="fb_boot_on">Vai iniciar com o sistema.</string>
+    <string name="fb_boot_off">Não vai mais iniciar com o sistema.</string>
+    <string name="fb_clean_mem_on">Vai limpar memória ao abrir esse jogo.</string>
+    <string name="fb_clean_mem_off">Não vai mais limpar memória ao abrir.</string>
+    <string name="fb_game_notif_on">Notificação ligada para esse jogo.</string>
+    <string name="fb_game_notif_off">Notificação desligada para esse jogo.</string>
+    <string name="fb_error_generic">Algo deu errado, tenta de novo.</string>
+    <string name="fb_no_root">Sem root: ajuste salvo só no app.</string>
+    <string name="fb_no_module">Módulo Manjiro Dinamic não encontrado.</string>
+    <string name="fb_module_open_fail">Não foi possível abrir o painel avançado.</string>
+    <string name="fb_launch_fail">Não consegui abrir %1$s. Confere se está instalado.</string>
 
-    <!-- Notification actions -->
-    <string name="notif_roncar">Tocar a roncar</string>
-    <string name="notif_recuar">Recuar</string>
-    <string name="notif_refugio">Sair do refúgio</string>
-    <string name="notif_cronica">Crônica</string>
-    <string name="notif_abrir">Abrir</string>
-    <string name="notif_safe_reason">Motivo: %1$s</string>
+    <!-- Banners diagnósticos -->
+    <string name="banner_no_root_title">Sem acesso root</string>
+    <string name="banner_no_root_body">O Manjiro Gaming funciona melhor com root. Concede no teu gerenciador (Magisk / KernelSU / APatch).</string>
+    <string name="banner_no_module_title">Módulo Manjiro Dinamic não detectado</string>
+    <string name="banner_no_module_body">Instala o módulo Manjiro Dinamic pra ter modos sincronizados e métricas reais.</string>
 
-    <!-- Safe reasons -->
-    <string name="safe_reason_battery_emergency">Hinata muito quente</string>
-    <string name="safe_reason_soc_critical">Toman exausto</string>
-    <string name="safe_reason_fail_limit_exceeded">Falha repetida nos comandos</string>
-    <string name="safe_reason_shutdown">Toman recolhendo</string>
-    <string name="safe_reason_unknown">Motivo desconhecido</string>
+    <!-- Tempo -->
+    <string name="time_seconds_short">%1$ds</string>
+    <string name="time_minutes_short">%1$dmin</string>
+    <string name="time_hours_short">%1$dh %2$02dm</string>
+    <string name="time_format_short">%1$d:%2$02d</string>
 
-    <!-- Errors / connection -->
-    <string name="error_no_root">Mikey precisa do acesso de líder (root) pra controlar o Toman. Concede acesso no seu gerenciador (Magisk / KernelSU / APatch).</string>
-    <string name="error_no_module">Módulo Manjiro Dinamic não detectado. Instala o módulo primeiro.</string>
-    <string name="error_no_data">Esperando o primeiro relatório do motor…</string>
-    <string name="connecting">Conectando ao Toman…</string>
-
-    <!-- Misc -->
-    <string name="seconds_ago">há %1$ds</string>
-    <string name="minutes_ago">há %1$dmin</string>
-    <string name="hours_ago">há %1$dh</string>
-    <string name="days_ago">há %1$d dias</string>
-    <string name="time_h_m">%1$dh %2$02dm</string>
-    <string name="time_m_s">%1$d:%2$02d</string>
-    <string name="time_h_m_s">%1$d:%2$02d:%3$02d</string>
-
-    <!-- Cronica list -->
-    <string name="cronica_title">Crônica</string>
-    <string name="cronica_today">Hoje</string>
-    <string name="cronica_session_now">agora</string>
-    <string name="cronica_pico">pico %1$s°</string>
-    <string name="cronica_media">média %1$s°</string>
-    <string name="cronica_fps">FPS %1$d</string>
-    <string name="cronica_drain">−%1$d%%</string>
-    <string name="cronica_history">Histórico</string>
-    <string name="cronica_empty">Nenhuma batalha registrada ainda</string>
-
-    <!-- Onboarding -->
-    <string name="onboard_welcome_title">Bem-vindo ao Toman</string>
-    <string name="onboard_welcome_body">Eu sou o Manjiro. Controlo o teu celular como o Mikey controla o Toman: protejo o frio, libero o calor quando precisa, e seguro o Black Dragon longe da bateria.</string>
-    <string name="onboard_root_title">Mikey precisa do acesso de líder</string>
-    <string name="onboard_root_body">Pra falar com o motor Manjiro Dinamic, eu preciso de acesso root. Abre teu Magisk/KernelSU/APatch e concede a permissão.</string>
-    <string name="onboard_games_title">Quem são os capitães?</string>
-    <string name="onboard_games_body">Estes jogos serão postos sob o Modo Mikey. Tire o que não for jogo.</string>
-    <string name="onboard_hud_title">Aceita a Visão do Líder?</string>
-    <string name="onboard_hud_body">Um chip flutuante mostrando FPS, temperatura e bateria durante o jogo. Você pode desligar a qualquer momento.</string>
-    <string name="onboard_done_title">Toman pronto pra rua</string>
-    <string name="onboard_done_body">Tocar a roncar.</string>
-    <string name="onboard_next">Próximo</string>
-    <string name="onboard_grant">Conceder acesso</string>
-    <string name="onboard_finish">Tocar a roncar</string>
-    <string name="onboard_skip">Pular</string>
+    <!-- Acessibilidade -->
+    <string name="cd_metric">Indicador %1$s, valor %2$s</string>
+    <string name="cd_mode_card">Cartão do modo %1$s</string>
+    <string name="cd_game_card">Jogo %1$s</string>
 </resources>

@@ -6,22 +6,20 @@ plugins {
 }
 
 android {
-    namespace = "dev.jtapzg.manjiro"
+    namespace = "com.jtapzg.manjirogaming"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "dev.jtapzg.manjiro"
-        minSdk = 29
+        applicationId = "com.jtapzg.manjirogaming"
+        minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 27
+        versionName = "1.1.0"
         resourceConfigurations += listOf("pt-rBR", "en")
     }
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
             isMinifyEnabled = false
         }
         release {
@@ -45,6 +43,7 @@ android {
         freeCompilerArgs += listOf(
             "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
             "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.animation.ExperimentalAnimationApi",
             "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
         )
     }

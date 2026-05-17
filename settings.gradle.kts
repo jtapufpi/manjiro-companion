@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Manjiro Companion"
+rootProject.name = "Manjiro Gaming"
 include(":app")

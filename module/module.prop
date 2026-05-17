@@ -1,0 +1,8 @@
+id=manjiro_dinamic
+name=Manjiro Dinamic
+version=v1.7.4
+versionCode=27
+author=jtapzg
+description=Controlador adaptativo de desempenho e temperatura para SD870 / Edge 20 Pro com o app Manjiro Gaming embutido em simbiose (tema RedMagic, 5 abas, launcher de jogos integrado, slider de qualidade de imagem por jogo, limpeza de memoria ao abrir, Modo Automatico por bateria e temperatura, integracao com cmd game mode). Modos do APK (Lite/Balanced/Performance/Auto) reconfiguram o motor em tempo real via user.conf. Motor MPC + CBF + Lyapunov + Pareto + reward por pacote, com tabelas reais de cpufreq/KGSL/devfreq e atuadores de economia de bateria. Magisk / KernelSU / KSU Next / APatch.
+updateJson=
+webuiIcon=webroot/icon.webp

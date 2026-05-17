@@ -1,0 +1,658 @@
+#!/system/bin/sh
+# MANJIRO DINAMIC — main daemon (FSM) v1.6.2-fixes
+#
+# Key v1.6 changes:
+#   1. TACTICAL signal is SoC die-temp (max_thermal_c10), NOT battery. Battery
+#      temp is read independently and only triggers SAFE when it crosses
+#      BATTERY_EMERGENCY_C10 (default 45.0°C).
+#   2. Two independent ceilings: SOC_HARD_LIMIT_C10 (default 85°C) for the
+#      SoC, BATTERY_EMERGENCY_C10 (default 45°C) for the battery.
+#   3. Event-driven: blocks on inotify over android_event.json/control.cmd
+#      (and a long deadline). No more polling Android every 2 seconds.
+#   4. Advanced engine wired in: scripts/sense.sh (EMA/MPC/CUSUM) + scripts/
+#      control.sh (cost / CBF / Lyapunov / Pareto / pkg-history) when
+#      ENGINE_MODE=advanced (default). Falls back to legacy policy.sh otherwise.
+#   5. No more repeated background subprocess spawns — read_state() does one
+#      pass and runs the rest in-process.
+
+MODDIR=""; DATA=""
+_prev=""
+for _arg in "$@"; do
+  case "$_prev" in --moddir) MODDIR="$_arg";; --data) DATA="$_arg";; esac
+  _prev="$_arg"
+done
+MODDIR="${MODDIR:-/data/adb/modules/manjiro_dinamic}"
+DATA="${DATA:-/data/adb/manjiro_dinamic}"
+RUNDIR="$DATA/run"
+LOGDIR="$DATA/logs"
+CONFDIR="$DATA/config"
+STATEDIR="$DATA/state"
+HISTDIR="$DATA/history"
+
+mkdir -p "$RUNDIR" "$LOGDIR" "$STATEDIR" "$CONFDIR" "$DATA/backup" "$HISTDIR" 2>/dev/null
+
+# ── Source order matters: common → math870 → thermal → sense → io → control ─
+. "$MODDIR/scripts/common.sh"
+. "$MODDIR/scripts/rollback.sh"
+. "$MODDIR/scripts/math870.sh"
+. "$MODDIR/scripts/thermal.sh"
+. "$MODDIR/scripts/sense.sh"
+. "$MODDIR/scripts/policy.sh"
+. "$MODDIR/scripts/io.sh"
+. "$MODDIR/scripts/control.sh"
+. "$MODDIR/scripts/mitigation.sh"
+. "$MODDIR/scripts/atuadores.sh"
+
+for _c in "$CONFDIR/runtime.conf" "$CONFDIR/user.conf"; do
+  [ -f "$_c" ] && . "$_c"
+done
+
+# ── Instance lock ─────────────────────────────────────────────────────────────
+LOCKDIR="$STATEDIR/daemon.lock"
+if mkdir "$LOCKDIR" 2>/dev/null; then
+  echo $$ > "$LOCKDIR/pid"
+else
+  _existing="$(cat "$LOCKDIR/pid" 2>/dev/null)"
+  if [ -n "$_existing" ] && kill -0 "$_existing" 2>/dev/null; then exit 0; fi
+  rm -rf "$LOCKDIR"; mkdir "$LOCKDIR" 2>/dev/null; echo $$ > "$LOCKDIR/pid"
+fi
+echo $$ > "$STATEDIR/daemon.pid"
+
+trap_exit() {
+  rollback_group game 2>/dev/null
+  rollback_group thermal 2>/dev/null
+  echo '{"mode":"SAFE","safe_mode":true,"safe_reason":"shutdown"}' > "$STATEDIR/status.json"
+  rm -rf "$LOCKDIR" 2>/dev/null
+  logi "daemon:exit"
+  exit 0
+}
+trap 'trap_exit' TERM INT HUP
+
+logi "daemon:start v1.7.0"
+
+# ── SoC fingerprint + mitigation rebuild ─────────────────────────────────────
+mitigation_rebuild 2>/dev/null
+is_kona_soc && logi "soc:kona-confirmed" || logi "soc:non-kona (extras gated off)"
+
+# ── Capability probe (one-shot, logged so kernel limits are visible) ─────────
+_cap_uclamp="no"
+for _b in /dev/cpuctl /sys/fs/cgroup; do
+  [ -e "$_b/top-app/cpu.uclamp.max" ] && { _cap_uclamp="yes"; break; }
+done
+_cap_schedtune="no"
+[ -d /dev/stune ] && _cap_schedtune="yes"
+_cap_inotify="no"
+command -v inotifywait >/dev/null 2>&1 && _cap_inotify="wait"
+[ "$_cap_inotify" = "no" ] && command -v inotifyd >/dev/null 2>&1 && _cap_inotify="d"
+_cap_psi="no"
+[ -e /proc/pressure/cpu ] && _cap_psi="yes"
+_cap_thermal_trips="no"
+ls /sys/class/thermal/thermal_zone*/trip_point_0_temp 2>/dev/null | head -1 | grep -q . && _cap_thermal_trips="yes"
+logi "caps:uclamp=$_cap_uclamp schedtune=$_cap_schedtune inotify=$_cap_inotify psi=$_cap_psi thermal_trips=$_cap_thermal_trips"
+
+# Mute the engaged action log when action is hold; keep only meaningful changes.
+last_action_logged=""
+echo "$_cap_uclamp"        > "$RUNDIR/cap_uclamp"
+echo "$_cap_schedtune"     > "$RUNDIR/cap_schedtune"
+echo "$_cap_inotify"       > "$RUNDIR/cap_inotify"
+echo "$_cap_psi"           > "$RUNDIR/cap_psi"
+echo "$_cap_thermal_trips" > "$RUNDIR/cap_thermal_trips"
+# If kernel lacks uclamp, force-disable the apply path so we don't spam writes.
+[ "$_cap_uclamp" = "no" ] && UCLAMP_ENABLE=0
+unset _b _cap_uclamp _cap_schedtune _cap_inotify _cap_psi _cap_thermal_trips
+
+# ── Global state ──────────────────────────────────────────────────────────────
+FSM_STATE="BOOTSTRAP"
+SAFE_REASON=""
+HELPER_STALE=0
+LAST_PKG=""
+GAME_CYCLES=0
+GAME_STOP_CYCLES=0
+COOLDOWN_START=0
+LOOP_INTERVAL="${LOOP_ACTIVE_SEC:-15}"
+AS_SCREEN="false"
+AS_PKG=""
+AS_BAT_TEMP=0
+AS_MAX_TEMP=0
+AS_CURRENT=0
+AS_GPU=0
+AS_CPU_PSI=0
+AS_MEM_PSI=0
+AS_IO_PSI=0
+CAP_PRIME=100
+CAP_GOLD=100
+CAP_GPU=100
+
+# ── Event-driven wait (inotify) ───────────────────────────────────────────────
+wait_for_event_or_timeout() {
+  local wt="$1"
+  if [ "${EVENT_DRIVEN:-1}" = "1" ] && command -v inotifywait >/dev/null 2>&1; then
+    # Only create watched files if missing — do NOT truncate, as that would
+    # wipe pending commands.
+    [ -e "$STATEDIR/android_event.json" ] || : > "$STATEDIR/android_event.json" 2>/dev/null
+    [ -e "$STATEDIR/control.cmd" ]        || : > "$STATEDIR/control.cmd"        2>/dev/null
+    inotifywait -t "$wt" -q -e close_write -e modify -e moved_to \
+      "$STATEDIR/android_event.json" \
+      "$STATEDIR/control.cmd" \
+      "$CONFDIR/runtime.conf" \
+      "$CONFDIR/games.json" 2>/dev/null
+  else
+    sleep "$wt"
+  fi
+}
+
+# ── Heartbeat check ───────────────────────────────────────────────────────────
+check_heartbeat() {
+  local hbf="$STATEDIR/heartbeat" hb_ts hb_now hb_age
+  if [ ! -f "$hbf" ]; then HELPER_STALE=1; return 1; fi
+  hb_ts="$(grep 'timestamp_ms=' "$hbf" 2>/dev/null | cut -d= -f2)"
+  is_num "$hb_ts" || { HELPER_STALE=1; return 1; }
+  hb_now="$(now_ms)"
+  hb_age=$(( (hb_now - hb_ts) / 1000 ))
+  if [ "$hb_age" -gt "${HELPER_TIMEOUT_SEC:-60}" ]; then
+    HELPER_STALE=1; return 1
+  fi
+  HELPER_STALE=0; return 0
+}
+
+# ── Read state (single pass, no spawning loops) ──────────────────────────────
+read_state() {
+  if screen_on; then AS_SCREEN="true"; else AS_SCREEN="false"; fi
+  AS_PKG="$(find_fg_app 2>/dev/null)"
+
+  # SoC die-temp (tactical) and battery temp (emergency-only) — SEPARATE.
+  # soc_thermal_c10 prefers CPU/GPU/AOSS/skin zones over modem/charger.
+  AS_MAX_TEMP="$(soc_thermal_c10)"
+  AS_BAT_TEMP="$(battery_temp_c10)"
+  AS_CURRENT="$(battery_ma)"
+  AS_GPU="$(gpu_busy)"
+  AS_CPU_PSI="$(psi_some_c100 /proc/pressure/cpu)"
+  AS_MEM_PSI="$(psi_some_c100 /proc/pressure/memory)"
+  AS_IO_PSI="$(psi_some_c100 /proc/pressure/io)"
+
+  # Helper JSON supplement (lower priority — never overrides SoC die-temp)
+  if [ "$HELPER_STALE" = "0" ]; then
+    local sf="$STATEDIR/android_status.json"
+    if [ -f "$sf" ]; then
+      local h_screen h_pkg h_bat h_max h_cur h_gpu h_cpsi h_mpsi h_ipsi
+      h_screen="$(grep -o '"screen_on":[a-z]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_pkg="$(grep -o '"foreground_package":"[^"]*"' "$sf" 2>/dev/null | sed 's/.*:"\([^"]*\)".*/\1/' | head -1)"
+      h_bat="$(grep -o '"battery_temp_c10":[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_max="$(grep -o '"max_thermal_c10":[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_cur="$(grep -o '"current_ma":-\?[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_gpu="$(grep -o '"gpu_busy_pct":[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_cpsi="$(grep -o '"cpu_psi_cpct":[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_mpsi="$(grep -o '"mem_psi_cpct":[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      h_ipsi="$(grep -o '"io_psi_cpct":[0-9]*' "$sf" 2>/dev/null | cut -d: -f2 | head -1)"
+      [ -n "$h_screen" ] && AS_SCREEN="$h_screen"
+      [ -n "$h_pkg"    ] && AS_PKG="$h_pkg"
+      # IMPORTANT: SoC max is OUR sysfs read; bridge value used only as fallback.
+      is_num "$h_bat"  && AS_BAT_TEMP="$h_bat"
+      is_num "$h_max"  && [ "$AS_MAX_TEMP" -eq 0 ] && AS_MAX_TEMP="$h_max"
+      is_num "$h_cur"  && AS_CURRENT="$h_cur"
+      is_num "$h_gpu"  && AS_GPU="$h_gpu"
+      is_num "$h_cpsi" && AS_CPU_PSI="$h_cpsi"
+      is_num "$h_mpsi" && AS_MEM_PSI="$h_mpsi"
+      is_num "$h_ipsi" && AS_IO_PSI="$h_ipsi"
+    fi
+  fi
+
+  is_num "$AS_BAT_TEMP" || AS_BAT_TEMP=0
+  is_num "$AS_MAX_TEMP" || AS_MAX_TEMP=0
+  is_num "$AS_CURRENT"  || AS_CURRENT=0
+  is_num "$AS_GPU"      || AS_GPU=0
+  is_num "$AS_CPU_PSI"  || AS_CPU_PSI=0
+  is_num "$AS_MEM_PSI"  || AS_MEM_PSI=0
+  is_num "$AS_IO_PSI"   || AS_IO_PSI=0
+}
+
+read_latest_event_seq() {
+  local f="$STATEDIR/android_event.json" seq
+  [ -f "$f" ] || { echo "0"; return; }
+  seq="$(grep -o '"seq":[0-9]*' "$f" 2>/dev/null | cut -d: -f2 | head -1)"
+  is_num "$seq" && echo "$seq" || echo "0"
+}
+
+is_game() {
+  [ -n "$1" ] || return 1
+  [ -f "$CONFDIR/games.json" ] && grep -q "\"$1\"" "$CONFDIR/games.json" && return 0
+  return 1
+}
+
+# ── Status JSON (extended schema with engine fields) ─────────────────────────
+write_status_json() {
+  local sm="false"; [ "$FSM_STATE" = "SAFE" ] && sm="true"
+  local ha="false"; [ "$HELPER_STALE" = "0" ] && ha="true"
+  local hs="false"; [ "$HELPER_STALE" = "1" ] && hs="true"
+  local gc="unknown" gi
+  is_game "$LAST_PKG" && { gi="$(load_game_profile "$LAST_PKG")"; gc="${gi%%|*}"; }
+
+  local pred5 pred10 dem bot act bud seq ts zone osc lv slope soc_e bat_e
+  pred5="$(cat   "$RUNDIR/temp_pred_5s"     2>/dev/null)"; is_num "$pred5"  || pred5="$AS_MAX_TEMP"
+  pred10="$(cat  "$RUNDIR/temp_pred_10s"    2>/dev/null)"; is_num "$pred10" || pred10="$AS_MAX_TEMP"
+  dem="$(cat     "$RUNDIR/cooling_demand"   2>/dev/null)"; is_num "$dem"    || dem=0
+  bot="$(cat     "$RUNDIR/bottleneck_state" 2>/dev/null)"; [ -z "$bot" ]    && bot="none"
+  act="$(cat     "$RUNDIR/last_action"      2>/dev/null)"; [ -z "$act" ]    && act="hold"
+  zone="$(cat    "$RUNDIR/thermal_zone"     2>/dev/null)"; [ -z "$zone" ]   && zone="free"
+  osc="$(cat     "$RUNDIR/oscillation_count" 2>/dev/null)"; is_num "$osc"   || osc=0
+  lv="$(cat      "$RUNDIR/lyapunov_v"       2>/dev/null)"; is_num "$lv"     || lv=0
+  slope="$(cat   "$RUNDIR/slope_temp"       2>/dev/null)"; is_num "$slope"  || slope=0
+  soc_e="$(cat   "$RUNDIR/est_soc_temp"     2>/dev/null)"; is_num "$soc_e"  || soc_e="$AS_MAX_TEMP"
+  bat_e="$(cat   "$RUNDIR/est_bat_temp"     2>/dev/null)"; is_num "$bat_e"  || bat_e="$AS_BAT_TEMP"
+  bud="$(budget_remaining)"
+  seq="$(read_latest_event_seq)"
+  ts="$(now_ms)"
+
+  # Active actuators (Kona extras) — apenas em ENGAGED
+  local atu=""
+  if [ "$FSM_STATE" = "ENGAGED" ]; then
+    [ "${IO_SCHED_ENABLE:-1}"          = "1" ] && atu="$atu,\"io_sched\""
+    [ "${HWUI_HINTS_ENABLE:-1}"        = "1" ] && atu="$atu,\"hwui\""
+    [ "${KGSL_TUNE_ENABLE:-1}"         = "1" ] && atu="$atu,\"kgsl_ext\""
+    [ "${TOUCHPANEL_GAME_ENABLE:-1}"   = "1" ] && atu="$atu,\"touch\""
+    [ "${TCP_GAME_ENABLE:-1}"          = "1" ] && atu="$atu,\"tcp\""
+    [ "${SCHED_LIB_ENABLE:-1}"         = "1" ] && atu="$atu,\"sched_lib\""
+    [ "${KONA_BUS_FLOOR_ENABLE:-1}"    = "1" ] && atu="$atu,\"bus_floor\""
+    [ "${SCHED_KONA_ENABLE:-1}"        = "1" ] && atu="$atu,\"sched_kona\""
+    [ "${CPUSET_EXT_ENABLE:-1}"        = "1" ] && atu="$atu,\"cpuset_ext\""
+    [ "${THREAD_PIN_GAME_ENABLE:-1}"   = "1" ] && atu="$atu,\"thread_pin\""
+    [ "${VMTOUCH_GAME_ENABLE:-0}"      = "1" ] && atu="$atu,\"vmtouch\""
+  fi
+  atu="[${atu#,}]"
+
+  atomic_write "$STATEDIR/status.json" \
+"{\"version\":\"1.7.0\",\"engine\":\"${ENGINE_MODE:-advanced}\",\"mode\":\"${FSM_STATE}\",\
+\"safe_mode\":${sm},\"safe_reason\":\"${SAFE_REASON}\",\
+\"helper_alive\":${ha},\"helper_stale\":${hs},\
+\"foreground_package\":\"${LAST_PKG:-}\",\"game_class\":\"${gc}\",\
+\"soc_temp_c10\":${soc_e},\"battery_temp_c10\":${bat_e},\
+\"soc_target_c10\":${SOC_TARGET_C10:-800},\"soc_hard_limit_c10\":${SOC_HARD_LIMIT_C10:-850},\
+\"battery_emergency_c10\":${BATTERY_EMERGENCY_C10:-450},\
+\"temp_c10\":${AS_MAX_TEMP},\"temp_pred_5s_c10\":${pred5},\"temp_pred_10s_c10\":${pred10},\
+\"thermal_zone\":\"${zone}\",\"slope_c10_s\":${slope},\
+\"cooling_demand\":${dem},\"bottleneck_state\":\"${bot}\",\
+\"cpu_queue\":${AS_CPU_PSI},\"mem_queue\":${AS_MEM_PSI},\"io_queue\":${AS_IO_PSI},\
+\"gpu_busy\":${AS_GPU},\"current_ma\":${AS_CURRENT},\
+\"oscillation_count\":${osc},\"lyapunov_v\":${lv},\
+\"cap_prime_pct\":${CAP_PRIME},\"cap_gold_pct\":${CAP_GOLD},\"cap_gpu_pct\":${CAP_GPU},\
+\"last_action\":\"${act}\",\"actuation_budget\":${bud},\
+\"active_actuators\":${atu},\
+\"last_event_seq\":${seq},\"timestamp\":${ts}}"
+}
+
+# ── Engaged control: the advanced engine ─────────────────────────────────────
+run_engaged_control() {
+  # Sense pass
+  sense_run "$LOOP_INTERVAL"
+  sense_classify_bottleneck >/dev/null
+
+  local soc pred5
+  soc="$(cat "$RUNDIR/est_soc_temp" 2>/dev/null)"; is_num "$soc" || soc="$AS_MAX_TEMP"
+  pred5="$(cat "$RUNDIR/temp_pred_5s" 2>/dev/null)"; is_num "$pred5" || pred5="$soc"
+
+  # SoC critical → SAFE.
+  if [ "$pred5" -ge "${SOC_CRITICAL_C10:-900}" ]; then
+    FSM_STATE="SAFE"; SAFE_REASON="soc_critical"
+    logi_s "fsm:SAFE reason=soc_critical pred5=$pred5"
+    enter_safe; return
+  fi
+
+  # Cooling demand from PID, just for the WebUI / legacy compat.
+  local dem; dem="$(pid_compute "$pred5")"; echo "$dem" > "$RUNDIR/cooling_demand"
+
+  budget_reset_if_needed
+
+  # Snapshot pre-action state for reward computation.
+  echo "$soc"        > "$RUNDIR/pre_action_temp"
+  echo "$AS_CPU_PSI" > "$RUNDIR/pre_action_q_cpu"
+
+  # Pick action via cost/CBF/Pareto (or legacy fallback).
+  local act
+  if [ "${ENGINE_MODE:-advanced}" = "advanced" ]; then
+    act="$(ctl_select_action game "$LAST_PKG")"
+  else
+    local bot; bot="$(cat "$RUNDIR/bottleneck_state" 2>/dev/null)"; [ -z "$bot" ] && bot="none"
+    act="$(select_action_level "$dem" "$bot" "$AS_MEM_PSI" "$AS_IO_PSI" "$AS_GPU")"
+  fi
+
+  ctl_track_oscillation "$act"
+
+  # Apply the action.
+  case "$act" in
+    hold) : ;;
+    clamp_background|uclamp_bg_clamp)
+      budget_ok 1 && {
+        apply_uclamp_set "${UCLAMP_BG_CLAMPED:-5}" "${UCLAMP_GAME_SYSBG_MAX:-10}" "${UCLAMP_GAME_FG_MAX:-70}" "${UCLAMP_GAME_TOP_MIN:-8}" "${UCLAMP_GAME_TOP_MAX:-100}" game
+        budget_consume 1
+      } ;;
+    relax_background|release_cpu_margin|release_gpu_margin)
+      budget_ok 1 && {
+        # Step back to normal uclamp game values.
+        apply_uclamp_set "${UCLAMP_GAME_BG_MAX:-10}" "${UCLAMP_GAME_SYSBG_MAX:-20}" "${UCLAMP_GAME_FG_MAX:-80}" "${UCLAMP_GAME_TOP_MIN:-8}" "${UCLAMP_GAME_TOP_MAX:-100}" game
+        budget_consume 1
+      } ;;
+    kgsl_tl_tighten)
+      budget_ok 1 && { kgsl_target_load "${KGSL_GAME_TARGET_LOAD:-50}" game; budget_consume 1; } ;;
+    reduce_gpu_micro|tighten_gpu_margin)
+      if budget_ok 4; then
+        local step; step="$(sd870_cap_step gpu "$dem" "$CAP_GPU")"
+        CAP_GPU=$(( CAP_GPU - step ))
+        local floor; floor="$(sd870_floor_pct gpu)"; [ "$CAP_GPU" -lt "$floor" ] && CAP_GPU="$floor"
+        cap_gpu_pct "$CAP_GPU"; budget_consume 4
+      else act="hold"; fi ;;
+    reduce_gold_micro|tighten_cpu_margin)
+      if budget_ok 4; then
+        local step; step="$(sd870_cap_step gold "$dem" "$CAP_GOLD")"
+        CAP_GOLD=$(( CAP_GOLD - step ))
+        local floor; floor="$(sd870_floor_pct gold)"; [ "$CAP_GOLD" -lt "$floor" ] && CAP_GOLD="$floor"
+        cap_cluster_pct gold "$CAP_GOLD"; budget_consume 4
+      else act="hold"; fi ;;
+    reduce_prime_micro)
+      if budget_ok 5; then
+        local step; step="$(sd870_cap_step prime "$dem" "$CAP_PRIME")"
+        CAP_PRIME=$(( CAP_PRIME - step ))
+        local floor; floor="$(sd870_floor_pct prime)"; [ "$CAP_PRIME" -lt "$floor" ] && CAP_PRIME="$floor"
+        cap_cluster_pct prime "$CAP_PRIME"; budget_consume 5
+      else act="hold"; fi ;;
+    safe_rollback)
+      rollback_group game
+      release_caps
+      logi "engaged:safe_rollback"
+      ;;
+  esac
+
+  echo "$CAP_PRIME" > "$RUNDIR/cap_prime_pct"
+  echo "$CAP_GOLD"  > "$RUNDIR/cap_gold_pct"
+  echo "$CAP_GPU"   > "$RUNDIR/cap_gpu_pct"
+  echo "$act"       > "$RUNDIR/last_action"
+
+  # Lyapunov + pkg reward (post-action).
+  ctl_lyapunov_v >/dev/null
+  local r; r="$(ctl_compute_reward)"
+  ctl_pkg_history_record "$LAST_PKG" "$act" "$r"
+
+  [ "$act" != "hold" ] && logi "engaged:action=$act dem=$dem pred5=$pred5 osc=$(cat "$RUNDIR/oscillation_count" 2>/dev/null)"
+}
+
+# ── Mode helpers (unchanged actuators, just reuse io.sh) ─────────────────────
+enter_active() {
+  kill_boosts
+  apply_schedutil "${SCHEDUTIL_UP_US:-2000}" "${SCHEDUTIL_DOWN_US:-4000}" base
+  apply_uclamp_set "${UCLAMP_BG_MAX:-15}" "${UCLAMP_SYSBG_MAX:-30}" "${UCLAMP_FG_MAX:-70}" "${UCLAMP_TOP_MIN:-0}" "${UCLAMP_TOP_MAX:-100}" base
+  apply_eas "${EAS_UPMIGRATE:-92}" "${EAS_DOWNMIGRATE:-75}" base
+  kgsl_base_setup
+  kgsl_target_load "${KGSL_TARGET_LOAD:-65}" base
+  release_caps
+  relax_bus
+  # v1.7.1 — sair do bundle powersave caso esteja vindo de IDLE
+  if is_kona_soc && command -v exit_idle_sd870 >/dev/null 2>&1; then
+    exit_idle_sd870
+  fi
+  logi "fsm:ACTIVE"
+}
+
+enter_game() {
+  kill_boosts
+  begin_transaction
+  apply_schedutil "${SCHEDUTIL_GAME_UP_US:-1000}" "${SCHEDUTIL_GAME_DOWN_US:-10000}" game
+  apply_uclamp_set "${UCLAMP_GAME_BG_MAX:-10}" "${UCLAMP_GAME_SYSBG_MAX:-20}" "${UCLAMP_GAME_FG_MAX:-80}" "${UCLAMP_GAME_TOP_MIN:-8}" "${UCLAMP_GAME_TOP_MAX:-100}" game
+  apply_eas "${EAS_GAME_UPMIGRATE:-82}" "${EAS_GAME_DOWNMIGRATE:-62}" game
+  kgsl_target_load "${KGSL_GAME_TARGET_LOAD:-50}" game
+  apply_cpuset_game
+  apply_vm_game
+  apply_game_bus
+  # SD870/Kona extras (gated by mitigation + feature flags)
+  if is_kona_soc; then
+    enter_game_sd870 "${1:-}"
+  fi
+  commit_transaction
+  CAP_PRIME=100; CAP_GOLD=100; CAP_GPU=100
+  echo 100 > "$RUNDIR/cap_prime_pct"
+  echo 100 > "$RUNDIR/cap_gold_pct"
+  echo 100 > "$RUNDIR/cap_gpu_pct"
+  pid_reset
+  echo 0 > "$RUNDIR/oscillation_count"
+  echo "0" > "$RUNDIR/cooling_demand"
+  logi "fsm:ENGAGED pkg=${1:-}"
+}
+
+enter_screenoff() {
+  apply_schedutil "${SCHEDUTIL_SCREENOFF_UP_US:-12000}" "${SCHEDUTIL_SCREENOFF_DOWN_US:-40000}" base
+  apply_uclamp_set "${UCLAMP_IDLE_BG_MAX:-10}" "${UCLAMP_IDLE_SYSBG_MAX:-15}" "${UCLAMP_IDLE_FG_MAX:-60}" "${UCLAMP_IDLE_TOP_MIN:-0}" "${UCLAMP_IDLE_TOP_MAX:-85}" base
+  apply_eas "${EAS_IDLE_UPMIGRATE:-98}" "${EAS_IDLE_DOWNMIGRATE:-80}" base
+  kgsl_target_load "${KGSL_SCREENOFF_TARGET_LOAD:-80}" base
+  # v1.7.1 — powersave bundle (IO, KGSL, core_ctl, stune, sched, vm)
+  if is_kona_soc && command -v enter_idle_sd870 >/dev/null 2>&1; then
+    enter_idle_sd870
+  fi
+  logi "fsm:IDLE screenoff"
+}
+
+enter_cooldown() {
+  rollback_group game
+  if is_kona_soc; then
+    exit_game_sd870
+    # v1.7.1 — após cooldown queremos voltar ao powersave bundle se tela apagada
+    if [ "$AS_SCREEN" != "true" ] && command -v enter_idle_sd870 >/dev/null 2>&1; then
+      enter_idle_sd870
+    fi
+  fi
+  release_caps; relax_bus; pid_reset
+  CAP_PRIME=100; CAP_GOLD=100; CAP_GPU=100
+  COOLDOWN_START="$(now_s)"
+  logi "fsm:COOLDOWN"
+}
+
+enter_safe() {
+  rollback_group game; rollback_group thermal
+  release_caps
+  logi_s "fsm:SAFE reason=$SAFE_REASON"
+}
+
+# ── Control cmd ───────────────────────────────────────────────────────────────
+process_control_cmd() {
+  local cf="$STATEDIR/control.cmd" raw op arg1 arg2
+  [ -s "$cf" ] || return 0
+  # Drena TODA a fila de uma vez (APK pode enfileirar varias linhas).
+  local tmp="$cf.proc.$$"
+  mv -f "$cf" "$tmp" 2>/dev/null || return 0
+  : > "$cf" 2>/dev/null
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    raw="$(printf '%s' "$raw" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -z "$raw" ] && continue
+    op="$(echo "$raw" | awk '{print $1}')"
+    arg1="$(echo "$raw" | awk '{print $2}')"
+    arg2="$(echo "$raw" | awk '{print $3}')"
+    case "$op" in
+      reload)
+        for _c in "$CONFDIR/runtime.conf" "$CONFDIR/user.conf"; do [ -f "$_c" ] && . "$_c"; done
+        logi "cmd:reload" ;;
+      reset_safe)
+        if [ "$FSM_STATE" = "SAFE" ]; then
+          FSM_STATE="IDLE"; SAFE_REASON=""; enter_active; logi "cmd:reset_safe"
+        fi ;;
+      game_on)
+        # game_on [pkg] [profile]
+        [ -n "$arg1" ] && LAST_PKG="$arg1"
+        if [ "$FSM_STATE" != "ENGAGED" ]; then
+          FSM_STATE="ENGAGED"; enter_game "${arg1:-$LAST_PKG}"
+        fi
+        logi "cmd:game_on pkg=${arg1:-$LAST_PKG}" ;;
+      game_off)
+        if [ "$FSM_STATE" = "ENGAGED" ]; then
+          FSM_STATE="COOLDOWN"; enter_cooldown
+        fi
+        logi "cmd:game_off" ;;
+      mode_set)
+        # mode_set <KEY>  (KEY = LITE|BALANCED|PERFORMANCE|AUTO)
+        if [ -x "$MODDIR/scripts/apk_apply.sh" ]; then
+          "$MODDIR/scripts/apk_apply.sh" mode "$arg1" >>"$LOGDIR/apk_bridge.log" 2>&1
+          for _c in "$CONFDIR/runtime.conf" "$CONFDIR/user.conf"; do [ -f "$_c" ] && . "$_c"; done
+        fi
+        logi "cmd:mode_set $arg1" ;;
+      profile_set)
+        # profile_set <pkg> <profile>
+        if [ -x "$MODDIR/scripts/apk_apply.sh" ]; then
+          "$MODDIR/scripts/apk_apply.sh" profile "$arg1" "$arg2" >>"$LOGDIR/apk_bridge.log" 2>&1
+        fi
+        logi "cmd:profile_set $arg1 $arg2" ;;
+      quality)
+        # quality <pkg> <pct>
+        if [ -x "$MODDIR/scripts/apk_apply.sh" ]; then
+          "$MODDIR/scripts/apk_apply.sh" quality "$arg1" "$arg2" >>"$LOGDIR/apk_bridge.log" 2>&1
+        fi
+        logi "cmd:quality $arg1 $arg2" ;;
+      safe_clear|clean_memory)
+        # Limpa caches (drop_caches) + sinaliza alivio
+        sync 2>/dev/null
+        echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+        logi "cmd:safe_clear" ;;
+      shutdown)
+        # APK pedindo encerramento de sessao (nao mata o daemon)
+        : > "$STATEDIR/apk_state.json" 2>/dev/null
+        if [ "$FSM_STATE" = "ENGAGED" ]; then
+          FSM_STATE="COOLDOWN"; enter_cooldown
+        fi
+        logi "cmd:shutdown" ;;
+      dump)
+        "$MODDIR/system/bin/manjiroctl" dump >/dev/null 2>&1 ;;
+      *)
+        logi "cmd:unknown $raw" ;;
+    esac
+  done < "$tmp"
+  rm -f "$tmp" 2>/dev/null
+}
+
+# ── Battery emergency check (independent of tactical loop) ───────────────────
+check_battery_emergency() {
+  if [ "$AS_BAT_TEMP" -ge "${BATTERY_EMERGENCY_C10:-450}" ] && [ "$FSM_STATE" != "SAFE" ]; then
+    FSM_STATE="SAFE"; SAFE_REASON="battery_emergency"
+    logi_s "fsm:SAFE reason=battery_emergency bat=$AS_BAT_TEMP"
+    enter_safe
+    return 0
+  fi
+  return 1
+}
+
+# ── BOOTSTRAP ─────────────────────────────────────────────────────────────────
+logi "fsm:BOOTSTRAP"
+if [ ! -f "$STATEDIR/selected_policy" ]; then
+  "$MODDIR/system/bin/manjiro_probe" probe >> "$LOGDIR/probe.log" 2>&1
+  [ -f "$CONFDIR/runtime.conf" ] && . "$CONFDIR/runtime.conf"
+fi
+rollback_all 2>/dev/null
+budget_reset_if_needed
+echo "0" > "$RUNDIR/tx_fail_count"
+echo "0" > "$RUNDIR/oscillation_count"
+FSM_STATE="IDLE"
+enter_active
+write_status_json
+
+# ── Main loop ─────────────────────────────────────────────────────────────────
+while true; do
+  process_control_cmd
+  check_heartbeat
+  read_state
+
+  # Battery emergency takes precedence over everything except active shutdown.
+  check_battery_emergency
+
+  _fc="$(cat "$RUNDIR/tx_fail_count" 2>/dev/null)"; is_num "$_fc" || _fc=0
+  if [ "$_fc" -ge "${SAFE_MODE_FAIL_LIMIT:-5}" ] && [ "$FSM_STATE" != "SAFE" ]; then
+    FSM_STATE="SAFE"; SAFE_REASON="write_failures"; enter_safe
+  fi
+
+  _is_game=0; is_game "$AS_PKG" && _is_game=1
+
+  case "$FSM_STATE" in
+
+    IDLE)
+      LOOP_INTERVAL="${LOOP_IDLE_SEC:-30}"
+      if [ "$AS_SCREEN" = "true" ]; then
+        if [ "$_is_game" = "1" ]; then
+          GAME_CYCLES=$(( GAME_CYCLES + 1 ))
+          if [ "$GAME_CYCLES" -ge 2 ]; then
+            FSM_STATE="ENGAGED"; enter_game "$AS_PKG"
+            LAST_PKG="$AS_PKG"; GAME_CYCLES=0
+          fi
+        else
+          GAME_CYCLES=0; FSM_STATE="ACTIVE"; enter_active; LAST_PKG="$AS_PKG"
+        fi
+      fi
+      ;;
+
+    ACTIVE)
+      LOOP_INTERVAL="${LOOP_ACTIVE_SEC:-15}"
+      if [ "$AS_SCREEN" != "true" ]; then
+        FSM_STATE="IDLE"; enter_screenoff; GAME_CYCLES=0
+      elif [ "$_is_game" = "1" ]; then
+        GAME_CYCLES=$(( GAME_CYCLES + 1 ))
+        if [ "$GAME_CYCLES" -ge 2 ]; then
+          FSM_STATE="ENGAGED"; enter_game "$AS_PKG"
+          LAST_PKG="$AS_PKG"; GAME_CYCLES=0
+        fi
+      else
+        GAME_CYCLES=0; LAST_PKG="$AS_PKG"
+      fi
+      ;;
+
+    ENGAGED)
+      LOOP_INTERVAL="${LOOP_GAME_SEC:-3}"
+      if [ "$AS_SCREEN" != "true" ] || [ "$_is_game" = "0" ]; then
+        GAME_STOP_CYCLES=$(( GAME_STOP_CYCLES + 1 ))
+      else
+        GAME_STOP_CYCLES=0
+      fi
+      if [ "$GAME_STOP_CYCLES" -ge 3 ] || [ "$AS_SCREEN" != "true" ]; then
+        FSM_STATE="COOLDOWN"; enter_cooldown; GAME_STOP_CYCLES=0
+      else
+        run_engaged_control
+      fi
+      ;;
+
+    COOLDOWN)
+      LOOP_INTERVAL=5
+      _now_s="$(now_s)"
+      _elapsed=$(( _now_s - COOLDOWN_START ))
+      if [ "$_is_game" = "1" ] && [ "$AS_SCREEN" = "true" ]; then
+        FSM_STATE="ENGAGED"; enter_game "$AS_PKG"
+        LAST_PKG="$AS_PKG"; GAME_STOP_CYCLES=0
+      elif [ "$_elapsed" -ge "${COOLDOWN_SEC:-30}" ] && [ "$AS_MAX_TEMP" -le "${ZONE_SOFT_C10:-830}" ]; then
+        FSM_STATE="IDLE"; enter_active
+      fi
+      ;;
+
+    SAFE)
+      LOOP_INTERVAL=15
+      # Auto-clear SAFE if battery dropped well below emergency.
+      _exit_bat=$(( ${BATTERY_EMERGENCY_C10:-450} - 30 ))
+      if [ "$SAFE_REASON" = "battery_emergency" ] && [ "$AS_BAT_TEMP" -le "$_exit_bat" ]; then
+        FSM_STATE="IDLE"; SAFE_REASON=""; enter_active
+        logi_s "fsm:exit_safe bat=$AS_BAT_TEMP"
+      fi
+      write_status_json
+      wait_for_event_or_timeout "$LOOP_INTERVAL"
+      continue
+      ;;
+
+  esac
+
+  # ── End-of-loop telemetry refresh (independent of FSM state) ──────────
+  # Run a light sense pass + Lyapunov V in IDLE/ACTIVE/COOLDOWN/SAFE too,
+  # so the UI never shows stale 0 for fields that only ENGAGED used to fill.
+  if [ "$FSM_STATE" != "ENGAGED" ]; then
+    sense_run "$LOOP_INTERVAL" >/dev/null 2>&1
+    sense_classify_bottleneck   >/dev/null 2>&1
+    if command -v ctl_lyapunov_v >/dev/null 2>&1; then
+      ctl_lyapunov_v >/dev/null 2>&1
+    fi
+  fi
+
+  LAST_PKG="${AS_PKG:-$LAST_PKG}"
+  write_status_json
+  # Auto-detect heuristic: track unknown packages that behave like games.
+  if [ "$FSM_STATE" != "ENGAGED" ] && [ "$AS_SCREEN" = "true" ] && [ "$_is_game" = "0" ] && [ -n "$AS_PKG" ]; then
+    autodetect_observe "$AS_PKG" >/dev/null 2>&1
+  fi
+  wait_for_event_or_timeout "$LOOP_INTERVAL"
+done

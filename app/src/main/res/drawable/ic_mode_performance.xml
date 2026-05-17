@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Chama dupla / raio com seta -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M22,4 L18,22 H26 L18,44 L36,20 H28 L34,4 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M14,16 C16,12 20,10 22,8 C19,16 17,20 18,24 C16,22 13,20 14,16 Z" />
+</vector>
