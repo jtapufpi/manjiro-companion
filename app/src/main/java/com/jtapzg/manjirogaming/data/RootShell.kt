@@ -24,12 +24,21 @@ object RootShell {
 
     private const val TAG = "MgRootShell"
 
-    private const val MODULE_DIR = "/data/adb/manjiro_dinamic"
-    const val STATUS_PATH = "$MODULE_DIR/state/status.json"
-    const val CONTROL_PATH = "$MODULE_DIR/state/control.cmd"
-    const val APK_STATE_PATH = "$MODULE_DIR/state/apk_state.json"
-    const val GAMES_PATH = "$MODULE_DIR/config/games.json"
-    const val MODULE_PROP_PATH = "$MODULE_DIR/module.prop"
+    // Runtime data dir (criado pelo daemon do modulo).
+    private const val DATA_DIR = "/data/adb/manjiro_dinamic"
+    const val STATUS_PATH = "$DATA_DIR/state/status.json"
+    const val CONTROL_PATH = "$DATA_DIR/state/control.cmd"
+    const val APK_STATE_PATH = "$DATA_DIR/state/apk_state.json"
+    const val GAMES_PATH = "$DATA_DIR/config/games.json"
+
+    // module.prop fica no diretorio de instalacao do modulo, nao no data dir.
+    // Magisk/KSU/APatch usam /data/adb/modules/<id>/, e durante update ha
+    // tambem /data/adb/modules_update/<id>/.
+    private val MODULE_PROP_PATHS = listOf(
+        "/data/adb/modules/manjiro_dinamic/module.prop",
+        "/data/adb/modules_update/manjiro_dinamic/module.prop",
+        "$DATA_DIR/module.prop" // fallback legado
+    )
 
     init {
         Shell.enableVerboseLogging = false
@@ -45,7 +54,22 @@ object RootShell {
     }
 
     suspend fun isModuleInstalled(): Boolean = withContext(Dispatchers.IO) {
-        SuFile(MODULE_PROP_PATH).exists()
+        // Tenta varios caminhos porque Magisk/KSU/APatch instalam o modulo
+        // em /data/adb/modules/<id>/ (e nao no data dir do daemon).
+        // Tambem aceitamos o data dir como sinal positivo: se o daemon ja
+        // rodou alguma vez, esse dir existe — significa que o modulo esta
+        // (ou esteve) instalado e os contratos de IPC continuam validos.
+        // Faz a checagem via Shell pra evitar problemas com FLAG_MOUNT_MASTER
+        // em alguns rooters: 'test -e' enxerga o filesystem mesmo se
+        // SuFile.exists() falhar por race do mount namespace.
+        val candidates = MODULE_PROP_PATHS + listOf(
+            "$DATA_DIR/state",
+            "$DATA_DIR/config/runtime.conf"
+        )
+        runCatching {
+            val test = candidates.joinToString(" || ") { "[ -e \"$it\" ]" }
+            Shell.cmd(test).exec().isSuccess
+        }.onFailure { Log.w(TAG, "isModuleInstalled", it) }.getOrDefault(false)
     }
 
     suspend fun readText(path: String): String? = withContext(Dispatchers.IO) {
