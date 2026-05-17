@@ -1,0 +1,89 @@
+#!/system/bin/sh
+# MANJIRO DINAMIC — watchdog
+# Spawned by service.sh; restarts manjirod within ~5s of a silent death.
+# Safe-stops if MODDIR vanishes (module uninstalled) or if we hit a tight
+# restart-loop (>5 restarts in 60s) — in that case it backs off 5 min.
+#
+# Usage: manjiro_watchdog <MODDIR> <DATA>
+
+MODDIR="${1:-/data/adb/modules/manjiro_dinamic}"
+DATA="${2:-/data/adb/manjiro_dinamic}"
+LOGDIR="$DATA/logs"
+STATEDIR="$DATA/state"
+LOG="$LOGDIR/watchdog.log"
+PIDFILE="$STATEDIR/daemon.pid"
+LOCKDIR="$STATEDIR/daemon.lock"
+SELFPID="$STATEDIR/watchdog.pid"
+
+# Single-instance enforcement.
+# Note: service.sh / manjiroctl write our PID to $SELFPID *before* we run,
+# so we deliberately ignore the case where $old equals our own PID — that's
+# the launcher pre-registering us, not a duplicate. Only treat it as a
+# duplicate if the old PID is alive AND different from $$.
+mkdir -p "$STATEDIR" 2>/dev/null
+if [ -f "$SELFPID" ]; then
+  old="$(cat "$SELFPID" 2>/dev/null)"
+  if [ -n "$old" ] && [ "$old" != "$$" ] && kill -0 "$old" 2>/dev/null; then
+    exit 0
+  fi
+fi
+echo $$ > "$SELFPID"
+
+mkdir -p "$LOGDIR" "$STATEDIR" 2>/dev/null
+
+log() { echo "$(date '+%H:%M:%S') $*" >> "$LOG"; }
+
+trap 'log "watchdog:exit signal"; rm -f "$SELFPID"; exit 0' TERM INT HUP
+
+restarts_60s=0
+last_reset=$(date +%s)
+log "watchdog:start pid=$$ moddir=$MODDIR"
+
+CHECK_INTERVAL="${WATCHDOG_INTERVAL_SEC:-5}"
+MAX_RESTARTS_60S="${WATCHDOG_MAX_RESTARTS_60S:-5}"
+BACKOFF_SEC="${WATCHDOG_BACKOFF_SEC:-300}"
+
+while [ -d "$MODDIR" ]; do
+  sleep "$CHECK_INTERVAL"
+
+  # Reset restart counter every 60s
+  now=$(date +%s)
+  if [ $((now - last_reset)) -ge 60 ]; then
+    restarts_60s=0
+    last_reset=$now
+  fi
+
+  # Is the daemon alive?
+  dpid="$(cat "$PIDFILE" 2>/dev/null)"
+  if [ -n "$dpid" ] && kill -0 "$dpid" 2>/dev/null; then
+    continue
+  fi
+
+  # Daemon is dead — guardrail before respawn
+  if [ "$restarts_60s" -ge "$MAX_RESTARTS_60S" ]; then
+    log "watchdog:abort >=${MAX_RESTARTS_60S} restarts in 60s; backing off ${BACKOFF_SEC}s"
+    sleep "$BACKOFF_SEC"
+    restarts_60s=0
+    last_reset=$(date +%s)
+    continue
+  fi
+
+  log "watchdog:respawn daemon was dead (last pid=$dpid, restart #$((restarts_60s+1)))"
+  rm -rf "$LOCKDIR" 2>/dev/null
+  if [ -x "$MODDIR/system/bin/manjirod" ]; then
+    nohup "$MODDIR/system/bin/manjirod" \
+        --data "$DATA" --moddir "$MODDIR" \
+        >"$LOGDIR/daemon_stdout.log" 2>&1 &
+    new_pid="$!"
+    echo "$new_pid" > "$PIDFILE"
+    log "watchdog:respawn-ok new pid=$new_pid"
+  else
+    log "watchdog:fatal manjirod binary missing"
+  fi
+  restarts_60s=$((restarts_60s + 1))
+  sleep 2
+done
+
+log "watchdog:exit MODDIR gone"
+rm -f "$SELFPID"
+exit 0

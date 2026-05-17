@@ -1,0 +1,38 @@
+{
+  "_comment_pt": "Kill-switches por dispositivo/kernel. Cada tag listada sera BLOQUEADA. Aplicar via scripts/mitigation.sh. Calibrado v1.7.1 contra dump do Edge 20 Pro (pstar) Lineage 23.2 kernel 4.19.325-cip131-st15-perf.",
+  "default": {
+    "items": []
+  },
+  "device_rules": {
+    "motorola/pstar/Edge20Pro": {
+      "_comment_pt": "Edge 20 Pro confirmado: FocalTech FTS sem /proc/touchpanel. Probe ja faz fallback silencioso, mas marcamos para evitar setpops sem efeito. core_ctl=ok, KGSL=ok, devfreq L3/DDR=ok (paths customizados). sched_kona OK em 4.19-cip+walt.",
+      "items": []
+    },
+    "qcom/SM8250": {
+      "_comment_pt": "Kona generico. Sem desabilitar nada por default — todos os atuadores foram validados em multiplos kernels SM8250.",
+      "items": []
+    },
+    "kernel/4.19": {
+      "_comment_pt": "Kernel 4.19 da Lineage tem WALT scheduler — sched_kona compativel. NAO desabilitar.",
+      "items": []
+    },
+    "kernel/4.19-cip": {
+      "_comment_pt": "CIP (Civil Infrastructure Platform) baseline. As features WALT + Kona ja foram validadas no dump.",
+      "items": []
+    },
+    "kernel/5.4": {
+      "items": []
+    },
+    "kernel/5.10": {
+      "items": []
+    },
+    "vendor/oplus": {
+      "_comment_pt": "Em ROMs OPlus/Realme custom o touchpanel/limit_enable e exigido pelo HAL.",
+      "items": []
+    },
+    "vendor/motorola": {
+      "_comment_pt": "Motorola usa mmi_chrg_manager (parallel charger BQ2597X). charge_thermal_manage gerencia heat sem cortar perf.",
+      "items": []
+    }
+  }
+}

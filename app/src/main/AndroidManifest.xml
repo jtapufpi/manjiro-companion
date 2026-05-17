@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <queries>
@@ -19,7 +20,7 @@
     </queries>
 
     <application
-        android:name=".ManjiroApp"
+        android:name=".ManjiroGamingApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -27,7 +28,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Manjiro.Splash"
+        android:theme="@style/Theme.ManjiroGaming.Splash"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
 
@@ -36,7 +37,7 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:theme="@style/Theme.Manjiro.Splash">
+            android:theme="@style/Theme.ManjiroGaming.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -49,7 +50,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Monitora o estado do motor Manjiro Dinamic em tempo real para mostrar a temperatura do SoC, da bateria e o jogo em foco na notificacao persistente." />
+                android:value="Monitora a sessao de jogo, mantem o modo escolhido aplicado no motor Manjiro Dinamic e mostra metricas ao vivo na notificacao persistente." />
         </service>
 
         <receiver
@@ -62,6 +63,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".service.ShutdownReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.ACTION_SHUTDOWN" />
             </intent-filter>
         </receiver>
     </application>

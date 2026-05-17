@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Escudo dividido ao meio: metade cheia, metade só contorno -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,4 L42,10 V24 C42,34 34,42 24,44 C14,42 6,34 6,24 V10 Z M24,8 L10,12 V24 C10,32 16,38 24,40 V8 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M24,8 L38,12 V24 C38,32 32,38 24,40" />
+</vector>

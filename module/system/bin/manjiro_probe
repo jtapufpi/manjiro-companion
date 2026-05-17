@@ -1,0 +1,344 @@
+#!/system/bin/sh
+# MANJIRO DINAMIC — probe core: capability detection + policy compiler
+
+MODDIR="/data/adb/modules/manjiro_dinamic"
+DATADIR="/data/adb/manjiro_dinamic"
+CONFDIR="$DATADIR/config"
+STATEDIR="$DATADIR/state"
+RUNDIR="$DATADIR/run"
+CAP_FILE="$STATEDIR/capabilities.json"
+POLICY_FILE="$STATEDIR/selected_policy"
+CAP_SCORE_FILE="$STATEDIR/capability_score"
+RUNTIME_CONF="$CONFDIR/runtime.conf"
+APPLY_PLAN="$STATEDIR/apply_plan.txt"
+FPRINT_FILE="$STATEDIR/device_fingerprint"
+
+mkdir -p "$STATEDIR" "$CONFDIR" "$RUNDIR" 2>/dev/null
+
+is_num() { case "$1" in ''|*[!0-9-]*) return 1;; *) return 0;; esac; }
+
+# ── Capability probe helpers ───────────────────────────────────────────────────
+probe_writable() {
+  local node="$1"
+  [ -e "$node" ] || return 1
+  [ -w "$node" ] || return 1
+  local cur; cur="$(head -n 1 "$node" 2>/dev/null)"
+  # Write-probe: rewrite current value
+  echo "$cur" > "$node" 2>/dev/null && return 0
+  return 1
+}
+probe_value_stable() {
+  local node="$1"
+  [ -r "$node" ] || return 1
+  local v1 v2
+  v1="$(head -n 1 "$node" 2>/dev/null)"
+  sleep 1
+  v2="$(head -n 1 "$node" 2>/dev/null)"
+  [ "$v1" = "$v2" ] && return 0
+  return 1
+}
+# Confidence score 0-100
+capability_confidence() {
+  local node="$1" score=0
+  [ -e "$node" ]           && score=$(( score + 20 ))
+  [ -r "$node" ]           && score=$(( score + 20 ))
+  probe_writable "$node"   && score=$(( score + 20 ))
+  probe_value_stable "$node" && score=$(( score + 20 ))
+  [ -r "$node" ] && {
+    local v; v="$(head -n 1 "$node" 2>/dev/null)"
+    [ -n "$v" ] && score=$(( score + 20 ))
+  }
+  echo "$score"
+}
+# Level: 0=unsupported 1=read_only 2=writable_unverified 3=writable_verified 4=reversible 5=stable_runtime
+capability_level() {
+  local node="$1" conf="$2"
+  is_num "$conf" || conf=0
+  [ "$conf" -ge 80 ] && echo 5 && return
+  [ "$conf" -ge 60 ] && echo 4 && return
+  [ "$conf" -ge 40 ] && echo 3 && return
+  [ "$conf" -ge 20 ] && echo 2 && return
+  [ -r "$node" ]     && echo 1 && return
+  echo 0
+}
+
+# ── Device fingerprint ─────────────────────────────────────────────────────────
+make_fingerprint() {
+  local fp ku rb soc
+  fp="$(getprop ro.build.fingerprint 2>/dev/null | head -c 60)"
+  ku="$(uname -r 2>/dev/null)"
+  rb="$(getprop ro.board.platform 2>/dev/null)"
+  soc="$(getprop ro.soc.model 2>/dev/null)"
+  echo "${fp}|${ku}|${rb}|${soc}" | md5sum 2>/dev/null | awk '{print $1}'
+}
+fingerprint_changed() {
+  local cur; cur="$(make_fingerprint)"
+  local saved; saved="$(cat "$FPRINT_FILE" 2>/dev/null)"
+  [ "$cur" = "$saved" ] && return 1
+  echo "$cur" > "$FPRINT_FILE"
+  return 0
+}
+
+# ── Full probe ─────────────────────────────────────────────────────────────────
+run_probe() {
+  local soc ram_kb android_ver root_mgr
+
+  soc="$(getprop ro.soc.model 2>/dev/null)"
+  [ -z "$soc" ] && soc="$(getprop ro.board.platform 2>/dev/null)"
+  ram_kb="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}')"
+  is_num "$ram_kb" || ram_kb=0
+  android_ver="$(getprop ro.build.version.release 2>/dev/null)"
+
+  # SOC class
+  local soc_class="generic"
+  case "$soc" in SM8250*|kona*|8250*) soc_class="kona" ;; esac
+
+  # RAM class
+  local ram_class="standard"
+  [ "$ram_kb" -gt 10000000 ] && ram_class="large"
+
+  # Root manager
+  root_mgr="magisk"
+  [ -d /data/adb/ksu ] && root_mgr="ksu"
+  [ -d /data/adb/ap  ] && root_mgr="apatch"
+
+  # ── uclamp ──────────────────────────────────────────────────────────────────
+  local uclamp_node="" uclamp_conf=0 uclamp_level=0 uclamp_scale=100
+  for base in /dev/cpuctl /sys/fs/cgroup; do
+    local n="$base/background/cpu.uclamp.max"
+    [ -e "$n" ] && { uclamp_node="$n"; break; }
+  done
+  if [ -n "$uclamp_node" ]; then
+    uclamp_conf="$(capability_confidence "$uclamp_node")"
+    uclamp_level="$(capability_level "$uclamp_node" "$uclamp_conf")"
+    # Detect scale
+    local uval; uval="$(head -n 1 "$uclamp_node" 2>/dev/null)"
+    is_num "$uval" && [ "$uval" -gt 100 ] 2>/dev/null && uclamp_scale=1024
+  fi
+
+  # ── PSI ─────────────────────────────────────────────────────────────────────
+  local psi_conf=0 psi_level=0
+  if [ -r /proc/pressure/cpu ]; then
+    psi_conf=80; psi_level=5
+  fi
+
+  # ── KGSL ────────────────────────────────────────────────────────────────────
+  local kgsl_base="/sys/class/kgsl/kgsl-3d0"
+  local kgsl_conf=0 kgsl_level=0
+  [ -d "$kgsl_base" ] && { kgsl_conf=60; kgsl_level=3; }
+
+  local kgsl_tl_conf=0 kgsl_tl_level=0
+  local kgsl_tl_node="$kgsl_base/devfreq/adreno_tz/target_load"
+  if [ -e "$kgsl_tl_node" ]; then
+    kgsl_tl_conf="$(capability_confidence "$kgsl_tl_node")"
+    kgsl_tl_level="$(capability_level "$kgsl_tl_node" "$kgsl_tl_conf")"
+  fi
+
+  # ── devfreq ─────────────────────────────────────────────────────────────────
+  local devfreq_conf=0 devfreq_level=0
+  ls /sys/class/devfreq/*cpubw* >/dev/null 2>&1 && { devfreq_conf=60; devfreq_level=3; }
+
+  # ── EAS ─────────────────────────────────────────────────────────────────────
+  local eas_conf=0 eas_level=0
+  [ -e /proc/sys/kernel/sched_upmigrate ] && { eas_conf=80; eas_level=4; }
+
+  # ── CPU topology ─────────────────────────────────────────────────────────────
+  local prime_cpu=7 gold_start=4 gold_end=6 little_end=3
+  [ -d /sys/devices/system/cpu/cpufreq/policy7 ] || prime_cpu=""
+
+  # ── Capability score ─────────────────────────────────────────────────────────
+  local cap_score=0
+  [ "$uclamp_level" -ge 3  ] && cap_score=$(( cap_score + 20 ))
+  [ "$psi_level"    -ge 3  ] && cap_score=$(( cap_score + 20 ))
+  [ "$kgsl_tl_level" -ge 3 ] && cap_score=$(( cap_score + 20 ))
+  [ "$devfreq_level" -ge 3 ] && cap_score=$(( cap_score + 15 ))
+  [ "$eas_level"     -ge 3 ] && cap_score=$(( cap_score + 15 ))
+  [ "$ram_class"  = "large" ] && cap_score=$(( cap_score + 5 ))
+  [ -n "$prime_cpu" ]         && cap_score=$(( cap_score + 5 ))
+  echo "$cap_score" > "$CAP_SCORE_FILE"
+
+  # ── Write capabilities.json ─────────────────────────────────────────────────
+  cat > "$CAP_FILE" <<EOF
+{
+  "soc_class": "$soc_class",
+  "soc": "$soc",
+  "ram_class": "$ram_class",
+  "ram_kb": $ram_kb,
+  "android_ver": "$android_ver",
+  "root_mgr": "$root_mgr",
+  "prime_cpu": "${prime_cpu:-none}",
+  "capabilities": {
+    "uclamp": {"node": "$uclamp_node", "level": $uclamp_level, "confidence": $uclamp_conf, "scale": $uclamp_scale},
+    "psi": {"level": $psi_level, "confidence": $psi_conf},
+    "kgsl": {"level": $kgsl_level, "confidence": $kgsl_conf},
+    "kgsl_target_load": {"node": "$kgsl_tl_node", "level": $kgsl_tl_level, "confidence": $kgsl_tl_conf},
+    "devfreq": {"level": $devfreq_level, "confidence": $devfreq_conf},
+    "eas": {"level": $eas_level, "confidence": $eas_conf}
+  },
+  "capability_score": $cap_score,
+  "probe_time": "$(date '+%Y-%m-%d %H:%M:%S')"
+}
+EOF
+
+  # ── Select policy ────────────────────────────────────────────────────────────
+  local policy="safe_fallback"
+  if [ "$soc_class" = "kona" ]; then
+    if [ "$uclamp_level" -ge 3 ] && [ "$psi_level" -ge 3 ] && \
+       [ "$kgsl_tl_level" -ge 3 ] && [ "$devfreq_level" -ge 3 ] && [ "$eas_level" -ge 3 ]; then
+      policy="kona_full"
+    elif [ "$psi_level" -lt 3 ]; then
+      policy="kona_no_psi"
+    elif [ "$kgsl_tl_level" -lt 3 ]; then
+      policy="kona_no_kgsl"
+    elif [ "$uclamp_level" -lt 3 ]; then
+      policy="kona_no_uclamp"
+    elif [ "$devfreq_level" -lt 3 ]; then
+      policy="kona_no_devfreq"
+    else
+      policy="kona_partial"
+    fi
+  elif [ "$cap_score" -ge 40 ]; then
+    policy="snapdragon_generic"
+  fi
+  echo "$policy" > "$POLICY_FILE"
+
+  # ── Generate runtime.conf ────────────────────────────────────────────────────
+  compile_runtime_conf "$policy" "$uclamp_scale" "$psi_level" \
+    "$kgsl_tl_level" "$devfreq_level" "$eas_level"
+
+  # ── Generate apply_plan.txt ──────────────────────────────────────────────────
+  generate_apply_plan "$uclamp_level" "$kgsl_tl_level" "$devfreq_level" "$eas_level" "$psi_level"
+
+  echo "probe:done policy=$policy score=$cap_score"
+}
+
+# ── Runtime config compiler ────────────────────────────────────────────────────
+compile_runtime_conf() {
+  local policy="$1" uclamp_scale="$2" psi_level="$3" kgsl_tl_level="$4" \
+        devfreq_level="$5" eas_level="$6"
+
+  # Start from base config
+  local base_conf="$CONFDIR/config.conf"
+  [ -f "$base_conf" ] || base_conf="$MODDIR/manjiro/config/config.conf"
+
+  local tmp="$CONFDIR/runtime.conf.tmp"
+
+  # Copy base
+  [ -f "$base_conf" ] && cp "$base_conf" "$tmp" || > "$tmp"
+
+  # Apply capability-driven overrides
+  {
+    echo "# Runtime config — compiled by probe core"
+    echo "# Policy: $policy  Score: $(cat "$CAP_SCORE_FILE" 2>/dev/null)"
+    echo "# Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+
+    # PSI
+    if [ "$psi_level" -ge 3 ]; then
+      echo "BOTTLENECK_CLASSIFIER_MODE=psi"
+    else
+      echo "BOTTLENECK_CLASSIFIER_MODE=fallback"
+      echo "PSI_ENABLE=0"
+    fi
+
+    # KGSL target load
+    if [ "$kgsl_tl_level" -ge 3 ]; then
+      echo "KGSL_ENABLE=1"
+      echo "KGSL_TARGET_LOAD_ENABLE=1"
+    else
+      echo "KGSL_TARGET_LOAD_ENABLE=0"
+    fi
+
+    # devfreq
+    if [ "$devfreq_level" -ge 3 ]; then
+      echo "DEVFREQ_ENABLE=1"
+      echo "GAME_BUS_PERF=1"
+    else
+      echo "DEVFREQ_ENABLE=0"
+      echo "GAME_BUS_PERF=0"
+    fi
+
+    # EAS
+    if [ "$eas_level" -ge 3 ]; then
+      echo "EAS_ENABLE=1"
+    else
+      echo "EAS_ENABLE=0"
+    fi
+
+    # uclamp
+    if [ "$uclamp_scale" = "1024" ]; then
+      echo "UCLAMP_ENABLE=1"
+      echo "UCLAMP_SCALE=1024"
+    fi
+
+    # policy-specific
+    case "$policy" in
+      safe_fallback)
+        echo "UCLAMP_ENABLE=0"
+        echo "KGSL_ENABLE=0"
+        echo "DEVFREQ_ENABLE=0"
+        echo "EAS_ENABLE=0"
+        echo "GAME_BUS_PERF=0"
+        echo "SCHEDUTIL_ENABLE=1"
+        echo "GAME_RENICE_ENABLE=1"
+        ;;
+      kona_full)
+        echo "VM_GAME_GUARD=1"
+        echo "GAME_CPUSET_ENABLE=1"
+        echo "THERMAL_TARGET_DT=470"
+        echo "THERMAL_HARD_LIMIT_DT=500"
+        ;;
+    esac
+
+    # Thermal targets
+    echo "THERMAL_TARGET_DT=470"
+    echo "THERMAL_HARD_LIMIT_DT=500"
+
+    # SOC topology
+    echo "SOC_CLASS=$(cat "$STATEDIR/capabilities.json" 2>/dev/null | grep soc_class | sed 's/.*: *"\([^"]*\)".*/\1/')"
+    echo "RAM_CLASS=$(cat  "$STATEDIR/capabilities.json" 2>/dev/null | grep ram_class  | sed 's/.*: *"\([^"]*\)".*/\1/')"
+
+  } >> "$tmp"
+
+  # Merge: base first, then overrides (later lines win in shell source)
+  mv "$tmp" "$RUNTIME_CONF"
+}
+
+# ── Apply plan generator ───────────────────────────────────────────────────────
+generate_apply_plan() {
+  local ul="$1" kl="$2" dl="$3" el="$4" pl="$5"
+  {
+    echo "feature|node|supported|level|action"
+    printf 'uclamp_bg|/dev/cpuctl/background/cpu.uclamp.max|%s|%s|%s\n' \
+      "$([ -e /dev/cpuctl/background/cpu.uclamp.max ] && echo 1 || echo 0)" "$ul" \
+      "$([ "$ul" -ge 3 ] && echo apply || echo skip)"
+    printf 'kgsl_target_load|/sys/class/kgsl/kgsl-3d0/devfreq/adreno_tz/target_load|%s|%s|%s\n' \
+      "$([ -e /sys/class/kgsl/kgsl-3d0/devfreq/adreno_tz/target_load ] && echo 1 || echo 0)" "$kl" \
+      "$([ "$kl" -ge 3 ] && echo apply || echo skip)"
+    printf 'psi_cpu|/proc/pressure/cpu|%s|%s|%s\n' \
+      "$([ -r /proc/pressure/cpu ] && echo 1 || echo 0)" "$pl" \
+      "$([ "$pl" -ge 3 ] && echo monitor || echo skip)"
+    printf 'eas_upmigrate|/proc/sys/kernel/sched_upmigrate|%s|%s|%s\n' \
+      "$([ -e /proc/sys/kernel/sched_upmigrate ] && echo 1 || echo 0)" "$el" \
+      "$([ "$el" -ge 3 ] && echo apply || echo skip)"
+  } > "$APPLY_PLAN"
+}
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+case "$1" in
+  probe|run)        run_probe ;;
+  fingerprint)      make_fingerprint ;;
+  capabilities)     cat "$CAP_FILE" 2>/dev/null || echo "not probed yet" ;;
+  policy)           cat "$POLICY_FILE" 2>/dev/null || echo "unknown" ;;
+  score)            cat "$CAP_SCORE_FILE" 2>/dev/null || echo "0" ;;
+  plan)             cat "$APPLY_PLAN" 2>/dev/null || echo "not generated" ;;
+  runtime-config)   cat "$RUNTIME_CONF" 2>/dev/null || echo "not compiled" ;;
+  reprobe)
+    rm -f "$FPRINT_FILE" 2>/dev/null
+    run_probe ;;
+  check-fingerprint)
+    fingerprint_changed && echo "changed" || echo "same" ;;
+  *)
+    echo "probe|capabilities|policy|score|plan|runtime-config|reprobe|check-fingerprint"
+    ;;
+esac

@@ -1,0 +1,181 @@
+#!/system/bin/sh
+MODDIR="/data/adb/modules/manjiro_dinamic"
+DATA="/data/adb/manjiro_dinamic"
+STATEDIR="$DATA/state"; CONFDIR="$DATA/config"; LOGDIR="$DATA/logs"; RUNDIR="$DATA/run"
+
+. "$MODDIR/scripts/common.sh" 2>/dev/null || true
+
+send_cmd() { echo "$1" > "$STATEDIR/control.cmd"; }
+
+case "$1" in
+  status|status-json)
+    cat "$STATEDIR/status.json" 2>/dev/null || echo '{"error":"no status"}' ;;
+  reload)       send_cmd reload;     echo "queued: reload" ;;
+  reset-safe)   send_cmd reset_safe; echo "queued: reset_safe" ;;
+  game-on)      send_cmd game_on;    echo "queued: game_on" ;;
+  game-off)     send_cmd game_off;   echo "queued: game_off" ;;
+  probe)        "$MODDIR/system/bin/manjiro_probe" probe ;;
+  reprobe)      "$MODDIR/system/bin/manjiro_probe" reprobe ;;
+  capabilities) "$MODDIR/system/bin/manjiro_probe" capabilities ;;
+  policy)       "$MODDIR/system/bin/manjiro_probe" policy ;;
+  plan)         "$MODDIR/system/bin/manjiro_probe" plan ;;
+  runtime-config) "$MODDIR/system/bin/manjiro_probe" runtime-config ;;
+  logs)         tail -n 120 "$LOGDIR/main.log" 2>/dev/null ;;
+  monitor-log)  tail -n 60  "$LOGDIR/monitor.log" 2>/dev/null ;;
+  safety-log)   tail -n 60  "$LOGDIR/safety.log"  2>/dev/null ;;
+  heartbeat)    cat "$STATEDIR/heartbeat" 2>/dev/null || echo "no heartbeat" ;;
+  android-status) cat "$STATEDIR/android_status.json" 2>/dev/null || echo "no status" ;;
+  android-event)  cat "$STATEDIR/android_event.json"  2>/dev/null || echo "no event" ;;
+  web-start)    "$MODDIR/system/bin/manjiro_httpd" start ;;
+  web-stop)     "$MODDIR/system/bin/manjiro_httpd" stop ;;
+  web-restart)  "$MODDIR/system/bin/manjiro_httpd" restart ;;
+  daemon-restart)
+    pid="$(cat "$STATEDIR/daemon.pid" 2>/dev/null)"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 1
+    rm -rf "$STATEDIR/daemon.lock" 2>/dev/null
+    nohup "$MODDIR/system/bin/manjirod" --data "$DATA" --moddir "$MODDIR" \
+      >"$LOGDIR/daemon_stdout.log" 2>&1 &
+    echo "$!" > "$STATEDIR/daemon.pid"
+    echo "daemon restarted" ;;
+  helper-restart)
+    pid="$(cat "$STATEDIR/helper.pid" 2>/dev/null)"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 1
+    CLASSPATH="$MODDIR/system_monitor.apk" \
+      app_process / com.jtapzg.manjiro.SystemMonitor \
+      --data "$DATA" --interval 2 >/dev/null 2>&1 &
+    echo "$!" > "$STATEDIR/helper.pid"
+    echo "helper restarted" ;;
+  wd-status)
+    pid="$(cat "$STATEDIR/watchdog.pid" 2>/dev/null)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "watchdog: alive (pid=$pid)"
+      [ -f "$LOGDIR/watchdog.log" ] && tail -n 5 "$LOGDIR/watchdog.log"
+    else
+      echo "watchdog: NOT running"
+    fi ;;
+  wd-restart)
+    pid="$(cat "$STATEDIR/watchdog.pid" 2>/dev/null)"
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null; sleep 1
+    nohup "$MODDIR/system/bin/manjiro_watchdog" "$MODDIR" "$DATA" \
+        >>"$LOGDIR/watchdog.log" 2>&1 &
+    echo "$!" > "$STATEDIR/watchdog.pid"
+    echo "watchdog restarted" ;;
+  dump)
+    out="/sdcard/Manjiro/dump_$(date +%Y%m%d_%H%M%S).txt"
+    mkdir -p /sdcard/Manjiro 2>/dev/null
+    {
+      echo "=== STATUS ===";    cat "$STATEDIR/status.json" 2>/dev/null
+      echo; echo "=== ANDROID STATUS ==="; cat "$STATEDIR/android_status.json" 2>/dev/null
+      echo; echo "=== ANDROID EVENT ===";  cat "$STATEDIR/android_event.json"  2>/dev/null
+      echo; echo "=== HEARTBEAT ===";      cat "$STATEDIR/heartbeat" 2>/dev/null
+      echo; echo "=== CAPABILITIES ===";   cat "$STATEDIR/capabilities.json" 2>/dev/null
+      echo; echo "=== SELECTED POLICY ==="; cat "$STATEDIR/selected_policy" 2>/dev/null
+      echo; echo "=== RUNTIME CONF ===";   cat "$CONFDIR/runtime.conf" 2>/dev/null
+      echo; echo "=== MAIN LOG ===";       tail -n 100 "$LOGDIR/main.log" 2>/dev/null
+      echo; echo "=== SAFETY LOG ===";     cat "$LOGDIR/safety.log" 2>/dev/null
+    } > "$out" 2>/dev/null
+    echo "$out" ;;
+  scores)
+    echo "bottleneck: $(cat "$RUNDIR/bottleneck_state" 2>/dev/null)"
+    echo "zone:       $(cat "$RUNDIR/thermal_zone"     2>/dev/null)"
+    echo "demand:     $(cat "$RUNDIR/cooling_demand"   2>/dev/null)"
+    echo "last_action:$(cat "$RUNDIR/last_action"      2>/dev/null)"
+    echo "budget:     $(cat "$DATA/run/actuation_budget" 2>/dev/null)"
+    echo "cap_gpu:    $(cat "$RUNDIR/cap_gpu_pct"      2>/dev/null)"
+    echo "cap_prime:  $(cat "$RUNDIR/cap_prime_pct"    2>/dev/null)"
+    echo "cap_gold:   $(cat "$RUNDIR/cap_gold_pct"     2>/dev/null)"
+    ;;
+  engine)
+    echo "=== MANJIRO advanced engine ==="
+    echo "engine mode:    $(grep -E '^ENGINE_MODE=' "$CONFDIR/base.conf" 2>/dev/null | cut -d= -f2)"
+    echo "est_soc_temp:   $(cat "$RUNDIR/est_soc_temp"  2>/dev/null) c10"
+    echo "est_bat_temp:   $(cat "$RUNDIR/est_bat_temp"  2>/dev/null) c10"
+    echo "est_gpu_busy:   $(cat "$RUNDIR/est_gpu_busy"  2>/dev/null) %"
+    echo "slope_temp:     $(cat "$RUNDIR/slope_temp"    2>/dev/null) c10/s"
+    echo "pred_5s:        $(cat "$RUNDIR/temp_pred_5s"  2>/dev/null) c10"
+    echo "pred_10s:       $(cat "$RUNDIR/temp_pred_10s" 2>/dev/null) c10"
+    echo "bottleneck:     $(cat "$RUNDIR/bottleneck_state" 2>/dev/null) (live=$(cat "$RUNDIR/bottleneck_live" 2>/dev/null))"
+    echo "zone:           $(cat "$RUNDIR/thermal_zone"  2>/dev/null)"
+    echo "last_action:    $(cat "$RUNDIR/last_action"   2>/dev/null)"
+    echo "oscillation:    $(cat "$RUNDIR/oscillation_count" 2>/dev/null)"
+    echo "lyapunov_v:     $(cat "$RUNDIR/lyapunov_v"    2>/dev/null)"
+    echo "cost_selected:  $(cat "$RUNDIR/cost_selected" 2>/dev/null)"
+    echo "cap_prime/%:    $(cat "$RUNDIR/cap_prime_pct" 2>/dev/null)"
+    echo "cap_gold/%:     $(cat "$RUNDIR/cap_gold_pct"  2>/dev/null)"
+    echo "cap_gpu/%:      $(cat "$RUNDIR/cap_gpu_pct"   2>/dev/null)"
+    echo "cluster_prime%: $(cat "$RUNDIR/cluster_prime_pct" 2>/dev/null)"
+    echo "cluster_gold%:  $(cat "$RUNDIR/cluster_gold_pct"  2>/dev/null)"
+    echo "cluster_little%:$(cat "$RUNDIR/cluster_little_pct" 2>/dev/null)"
+    ;;
+  metrics)
+    # Compact one-line metrics for shell scripting / fast prompts.
+    soc="$(cat "$RUNDIR/est_soc_temp" 2>/dev/null)"
+    bat="$(cat "$RUNDIR/est_bat_temp" 2>/dev/null)"
+    p5="$(cat  "$RUNDIR/temp_pred_5s" 2>/dev/null)"
+    sl="$(cat  "$RUNDIR/slope_temp"   2>/dev/null)"
+    act="$(cat "$RUNDIR/last_action"  2>/dev/null)"
+    z="$(cat   "$RUNDIR/thermal_zone" 2>/dev/null)"
+    echo "soc=${soc:-?} bat=${bat:-?} pred5=${p5:-?} slope=${sl:-?} zone=${z:-?} action=${act:-?}"
+    ;;
+  thermal)
+    if type soc_thermal_c10 >/dev/null 2>&1; then
+      echo "soc_thermal_c10 = $(soc_thermal_c10)"
+    fi
+    if type max_thermal_c10 >/dev/null 2>&1; then
+      echo "max_thermal_c10 = $(max_thermal_c10)"
+    fi
+    if type gpu_thermal_c10 >/dev/null 2>&1; then
+      echo "gpu_thermal_c10 = $(gpu_thermal_c10)"
+    fi
+    if type battery_temp_c10 >/dev/null 2>&1; then
+      echo "battery_temp_c10 = $(battery_temp_c10)"
+    fi
+    echo
+    echo "=== zones ==="
+    for d in /sys/class/thermal/thermal_zone*; do
+      [ -d "$d" ] || continue
+      t="$(cat "$d/type" 2>/dev/null)"
+      v="$(cat "$d/temp" 2>/dev/null)"
+      printf "%-32s %s\n" "$t" "$v"
+    done
+    ;;
+  config)
+    echo "=== base.conf ==="
+    cat "$CONFDIR/base.conf" 2>/dev/null
+    echo
+    echo "=== runtime.conf ==="
+    cat "$CONFDIR/runtime.conf" 2>/dev/null
+    ;;
+  version)
+    grep -E '^(version|versionCode)=' "$MODDIR/module.prop" 2>/dev/null ;;
+  *)
+    echo "MANJIRO DINAMIC v1.6.2-fixes"
+    echo "usage: manjiroctl <command>"
+    echo
+    echo "STATE & CONTROL"
+    echo "  status[-json]                 current status JSON"
+    echo "  reload | reset-safe           queue daemon command"
+    echo "  game-on | game-off            force engaged-mode transitions"
+    echo "  daemon-restart                relaunch manjirod"
+    echo
+    echo "ENGINE"
+    echo "  engine                        full advanced-engine snapshot"
+    echo "  metrics                       one-line metrics (soc/bat/pred/zone/action)"
+    echo "  scores                        legacy demand/zone/budget/caps"
+    echo "  thermal                       list thermal zones + soc/gpu/bat reads"
+    echo
+    echo "INTROSPECTION"
+    echo "  probe | reprobe | capabilities | policy | plan | runtime-config"
+    echo "  config                        dump base.conf + runtime.conf"
+    echo "  logs | monitor-log | safety-log"
+    echo "  heartbeat | android-status | android-event"
+    echo "  dump                          full dump to /sdcard/Manjiro/"
+    echo "  version"
+    echo
+    echo "WEB"
+    echo "  web-start | web-stop | web-restart"
+    echo "  helper-restart"
+    echo "  wd-status                     show watchdog status + last 5 log lines"
+    echo "  wd-restart                    relaunch watchdog"
+    ;;
+esac

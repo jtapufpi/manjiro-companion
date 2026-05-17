@@ -1,0 +1,103 @@
+#!/system/bin/sh
+# MANJIRO DINAMIC — httpd using busybox httpd
+MODDIR="/data/adb/modules/manjiro_dinamic"
+DATA="/data/adb/manjiro_dinamic"
+WEBROOT="$MODDIR/webroot"
+PORT="${WEBUI_PORT:-8080}"
+PID_FILE="$DATA/state/httpd.pid"
+LOG="$DATA/logs/httpd.log"
+
+# Find busybox
+BB=""
+for _b in busybox \
+          /data/adb/magisk/busybox \
+          /data/adb/ksu/bin/busybox \
+          /data/adb/ap/bin/busybox \
+          /sbin/busybox \
+          /system/bin/busybox \
+          /system/xbin/busybox; do
+  if "$_b" httpd --help >/dev/null 2>&1 || "$_b" httpd -h / -p 65535 >/dev/null 2>&1; then
+    BB="$_b"; break
+  fi
+  command -v "$_b" >/dev/null 2>&1 && BB="$_b" && break
+done
+
+stop_httpd() {
+  _pid="$(cat "$PID_FILE" 2>/dev/null)"
+  [ -n "$_pid" ] && kill "$_pid" 2>/dev/null
+  pkill -f "httpd.*8080" 2>/dev/null
+  rm -f "$PID_FILE" 2>/dev/null
+}
+
+start_httpd() {
+  # Kill stale
+  stop_httpd
+  sleep 1
+
+  # Export DATA path for CGI scripts
+  export MANJIRO_DATA="$DATA"
+
+  if [ -n "$BB" ]; then
+    # busybox httpd — most reliable
+    "$BB" httpd -f -p 127.0.0.1:"$PORT" -h "$WEBROOT" \
+      >> "$LOG" 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "httpd:start busybox port=$PORT" >> "$LOG"
+  else
+    # fallback: python3
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$PORT" "$WEBROOT" "$DATA" << 'PYEOF' >> "$LOG" 2>&1 &
+import sys, os, json, http.server, threading
+PORT = int(sys.argv[1]); WEBROOT = sys.argv[2]; DATA = sys.argv[3]
+class H(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *a, **kw):
+        super().__init__(*a, directory=WEBROOT, **kw)
+    def do_GET(self):
+        p = self.path.split('?')[0]
+        m = {'/api/status': f'{DATA}/state/status.json',
+             '/api/android-status': f'{DATA}/state/android_status.json',
+             '/api/capabilities': f'{DATA}/state/capabilities.json',
+             '/api/games': f'{DATA}/config/games.json'}
+        if p in m:
+            try:
+                body = open(m[p]).read().encode()
+            except: body = b'{}'
+            self.send_response(200); self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length',len(body)); self.end_headers(); self.wfile.write(body)
+        elif p == '/api/logs':
+            import subprocess
+            try: lines = subprocess.check_output(['tail','-n','80',f'{DATA}/logs/main.log']).decode()
+            except: lines = ''
+            body = json.dumps({'lines': lines}).encode()
+            self.send_response(200); self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length',len(body)); self.end_headers(); self.wfile.write(body)
+        else: super().do_GET()
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length',0))
+        body = self.rfile.read(n).decode()
+        try: cmd = json.loads(body).get('cmd','')
+        except: cmd = ''
+        if cmd in ('reload','reset_safe','game_on','game_off'):
+            open(f'{DATA}/state/control.cmd','w').write(cmd)
+        self.send_response(200); self.send_header('Content-Type','application/json')
+        self.send_header('Content-Length',2); self.end_headers(); self.wfile.write(b'{}')
+    def log_message(self, *a): pass
+import socketserver
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(('127.0.0.1', PORT), H) as s: s.serve_forever()
+PYEOF
+      echo $! > "$PID_FILE"
+      echo "httpd:start python3 port=$PORT" >> "$LOG"
+    else
+      echo "httpd:no_server_available" >> "$LOG"
+    fi
+  fi
+}
+
+case "$1" in
+  start)   start_httpd ;;
+  stop)    stop_httpd ;;
+  restart) stop_httpd; sleep 1; start_httpd ;;
+  status)  cat "$PID_FILE" 2>/dev/null && echo " running" || echo "stopped" ;;
+  *)       start_httpd ;;
+esac

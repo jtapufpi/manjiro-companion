@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48"
+    android:tint="?attr/colorOnSurface">
+    <!-- Pena fina / folha estilizada -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M24,4 C36,4 42,12 42,22 C42,34 32,42 22,42 C12,42 6,36 6,28 C6,18 14,4 24,4 Z M24,8 C18,8 11,16 11,26 C11,32 15,37 22,37 C30,37 37,32 37,22 C37,14 32,8 24,8 Z"
+        android:fillType="evenOdd" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,40 L34,18"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18,28 L26,28 M16,32 L24,32 M20,24 L28,24"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round" />
+</vector>

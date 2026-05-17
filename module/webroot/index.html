@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<title>Manjiro Dinamic</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" type="text/css" href="/mmrl/insets.css" />
+</head>
+<body>
+<main id="app">
+
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-glyph"></span>
+      <span class="brand-name">Manjiro <span class="brand-name-light">Dinamic</span></span>
+    </div>
+    <div class="brand-state" id="state-pill">
+      <span class="state-dot" id="state-dot"></span>
+      <span id="state-label">—</span>
+    </div>
+  </header>
+
+  <!-- Hero status -->
+  <section class="hero">
+    <div class="hero-temp">
+      <div class="hero-temp-value">
+        <span id="hero-temp">--</span><span class="hero-temp-unit">°C</span>
+      </div>
+      <div class="hero-temp-meta">
+        <span id="hero-zone">temperatura do SoC</span>
+      </div>
+    </div>
+    <div class="hero-side">
+      <div class="hero-row">
+        <span class="hero-label">Bateria</span>
+        <span class="hero-val"><span id="hero-bat">--</span>°C</span>
+      </div>
+      <div class="hero-row">
+        <span class="hero-label">App em uso</span>
+        <span class="hero-val hero-val-pkg" id="hero-pkg">—</span>
+      </div>
+      <div class="hero-row">
+        <span class="hero-label">Modo</span>
+        <span class="hero-val" id="hero-mode">—</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Performance card -->
+  <section class="card">
+    <h2 class="card-title">Desempenho</h2>
+    <div class="bars">
+      <div class="bar">
+        <div class="bar-head"><span>CPU principal</span><span id="bar-prime-pct">100%</span></div>
+        <div class="bar-track"><div class="bar-fill bar-fill-1" id="bar-prime"></div></div>
+      </div>
+      <div class="bar">
+        <div class="bar-head"><span>CPU intermediária</span><span id="bar-gold-pct">100%</span></div>
+        <div class="bar-track"><div class="bar-fill bar-fill-2" id="bar-gold"></div></div>
+      </div>
+      <div class="bar">
+        <div class="bar-head"><span>GPU</span><span id="bar-gpu-pct">100%</span></div>
+        <div class="bar-track"><div class="bar-fill bar-fill-3" id="bar-gpu"></div></div>
+      </div>
+    </div>
+    <div class="action-row">
+      <div class="action-tag" id="action-tag">aguardando</div>
+      <div class="action-stable">
+        <span class="action-stable-label">Estabilidade</span>
+        <span class="action-stable-val" id="action-stable">—</span>
+      </div>
+    </div>
+    <div class="actuators-row">
+      <span class="actuators-label">Atuadores ativos</span>
+      <div class="actuators-list" id="actuators-list">—</div>
+    </div>
+  </section>
+
+  <!-- Thermal trend card -->
+  <section class="card">
+    <h2 class="card-title">Tendência térmica</h2>
+    <div class="trend">
+      <div class="trend-cell">
+        <div class="trend-num"><span id="trend-now">--</span><span class="trend-unit">°C</span></div>
+        <div class="trend-label">agora</div>
+      </div>
+      <div class="trend-cell">
+        <div class="trend-num"><span id="trend-5s">--</span><span class="trend-unit">°C</span></div>
+        <div class="trend-label">em 5 s</div>
+      </div>
+      <div class="trend-cell">
+        <div class="trend-num"><span id="trend-10s">--</span><span class="trend-unit">°C</span></div>
+        <div class="trend-label">em 10 s</div>
+      </div>
+    </div>
+    <div class="trend-bar-host">
+      <div class="trend-bar"><div class="trend-bar-fill" id="trend-bar-fill"></div></div>
+      <div class="trend-bar-marks">
+        <span>40°</span><span>60°</span><span>80°</span><span class="trend-mark-hot">85°</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Game list card -->
+  <section class="card">
+    <h2 class="card-title">Jogos reconhecidos
+      <span class="card-title-side" id="games-count">—</span>
+    </h2>
+    <div class="games-row">
+      <input id="games-filter" type="search" placeholder="buscar pacote…" autocomplete="off">
+      <button class="ghost-btn" id="games-add-current">+ Atual</button>
+    </div>
+    <div class="games-list" id="games-list">
+      <div class="games-empty">carregando…</div>
+    </div>
+  </section>
+
+  <!-- Compact controls -->
+  <section class="card">
+    <h2 class="card-title">Controles</h2>
+    <div class="controls">
+      <button class="btn" data-cmd="reload">Recarregar config</button>
+      <button class="btn" data-cmd="reset_safe">Sair do modo emergência</button>
+      <button class="btn btn-ghost" id="btn-logs-toggle">Ver eventos</button>
+    </div>
+    <pre class="logbox hidden" id="logbox">…</pre>
+  </section>
+
+  <footer class="app-footer">
+    <div class="foot-row">
+      <span>Manjiro Dinamic · v1.7.0</span>
+      <a class="gh-link" href="https://github.com/jtapzg" target="_blank" rel="noopener">github.com/jtapzg</a>
+    </div>
+    <div class="foot-sub">Snapdragon 870 · ajustes adaptativos</div>
+  </footer>
+
+</main>
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
